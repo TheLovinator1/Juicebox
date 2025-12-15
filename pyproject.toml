@@ -22,6 +22,7 @@ dependencies = [
     "platformdirs>=4.5.1",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
+    "textual-image[textual]>=0.8.4",
     "textual[syntax]>=6.9.0",
 ]
 

@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
-from typing import Literal
 from urllib.parse import urlparse
 
 from curl_cffi import requests
-from curl_cffi.requests import BrowserTypeLiteral  # noqa: TC002
 from markdownify import markdownify as html_to_md
-from platformdirs import user_config_path
-from platformdirs import user_data_path
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
-from pydantic_settings import SettingsConfigDict
 from textual.app import App
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.suggester import Suggester
 from textual.theme import Theme
 from textual.widgets import Footer
 from textual.widgets import Header
@@ -27,179 +18,18 @@ from textual.widgets import Markdown
 from textual.widgets import Tab
 from textual.widgets import Tabs
 
+from juicebox.action.search import do_action_search
+from juicebox.history import URLSuggester
+from juicebox.history import save_url_to_history
+from juicebox.hotkeys import get_hotkeys
 from juicebox.interactions import get_interaction
 from juicebox.interactions.loader import load_interactions
+from juicebox.settings import BrowserSettings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from textual.theme import Theme
-
-
-# History and data that needs to persist between runs
-DATA_DIR: Path = user_data_path(
-    appname="Juicebox",
-    appauthor="TheLovinator",
-    roaming=True,
-    ensure_exists=True,
-)
-
-# Configuration directory - settings etc.
-CONFIG_DIR: Path = user_config_path(
-    appname="Juicebox",
-    appauthor="TheLovinator",
-    roaming=True,
-    ensure_exists=True,
-)
-
-
-class BrowserSettings(BaseSettings):
-    """Browser configuration settings.
-
-    Uses pydantic-settings to load from environment variables and config files.
-    Settings can be overridden via JUICEBOX_* environment variables.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="JUICEBOX_",
-        env_file=CONFIG_DIR / ".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    theme: Literal["textual-dark", "textual-light"] = Field(
-        default="textual-dark",
-        description="Default theme for the browser",
-    )
-
-    history_limit: int = Field(
-        default=1000,
-        gt=0,
-        le=10000,
-        description="Maximum number of URLs to keep in history",
-    )
-
-    request_timeout: int = Field(
-        default=20,
-        gt=0,
-        le=120,
-        description="HTTP request timeout in seconds",
-    )
-
-    user_agent: BrowserTypeLiteral = Field(
-        default="firefox",
-        description="Browser to impersonate for curl_cffi",
-    )
-
-    default_scheme: str = Field(
-        default="https",
-        description="Default URL scheme if none provided",
-    )
-
-
-def get_history_file() -> Path:
-    """Get the path to the history file.
-
-    Returns:
-        Path: The path to the history file.
-    """
-    # TODO(TheLovinator): Migrate to a database or more structured format later  # noqa: E501, TD003
-    return DATA_DIR / "history.json"
-
-
-def load_history() -> list[str]:
-    """Load URL history from the history file.
-
-    Returns:
-        list[str]: A list of URLs from history, newest first.
-            Returns empty list if file doesn't exist.
-    """
-    history_file: Path = get_history_file()
-    if not history_file.exists():
-        return []
-
-    try:
-        with history_file.open("r", encoding="utf-8") as f:
-            data: list[str] = json.load(f)
-            return data
-    except json.JSONDecodeError, OSError:
-        return []
-
-
-def save_url_to_history(url: str, settings: BrowserSettings | None = None) -> None:
-    """Save a URL to the history file.
-
-    URLs are stored with newest first. Duplicates are removed (moved to top).
-    Maximum URLs kept is determined by settings.history_limit.
-
-    Args:
-        url: The URL to save to history.
-        settings: Browser settings to use. Creates default if not provided.
-
-    """
-    if settings is None:
-        settings = BrowserSettings()
-
-    history: list[str] = load_history()
-
-    # Remove the URL if it already exists (we'll add it to the front)
-    if url in history:
-        history.remove(url)
-
-    # Add URL to the front
-    history.insert(0, url)
-
-    # Keep only the most recent URLs based on settings
-    history = history[: settings.history_limit]
-
-    # Save to file
-    history_file: Path = get_history_file()
-    try:
-        with history_file.open("w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
-    except OSError:
-        pass  # Fail silently if we can't write history
-
-
-class URLSuggester(Suggester):
-    """Suggester that provides URL completions from browsing history."""
-
-    def __init__(self) -> None:
-        """Initialize the URLSuggester with cached history."""
-        super().__init__(use_cache=False, case_sensitive=False)
-        self._history: list[str] = []
-
-    async def get_suggestion(self, value: str) -> str | None:
-        """Get a URL suggestion based on the current input value.
-
-        Args:
-            value: The current input value.
-
-        Returns:
-            str | None: A suggested URL completion, or None if no match found.
-        """
-        # Don't suggest anything if value is empty or just whitespace
-        if not value or not value.strip():
-            return None
-
-        # Refresh history on each call to get latest URLs
-        self._history = load_history()
-
-        # Find first matching URL (case-insensitive)
-        value_lower: str = value.lower()
-        for url in self._history:
-            # Strip common prefixes for matching
-            url_normalized: str = url.lower()
-            url_normalized = url_normalized.removeprefix("https://").removeprefix(
-                "http://"
-            )
-            url_normalized = url_normalized.removeprefix("www.")
-
-            if url_normalized.startswith(value_lower):
-                return url
-
-        return None
 
 
 class PageResult(BaseModel):
@@ -289,7 +119,7 @@ def fetch_markdown(url: str, settings: BrowserSettings | None = None) -> PageRes
     # Try to find a handler for this domain
     # First try exact match
     handler: Callable[[str, BrowserSettings], PageResult] | None = get_interaction(
-        domain
+        domain,
     )
     if handler is not None:
         return handler(normalized, settings)
@@ -336,137 +166,7 @@ class JuiceboxApp(App[None]):
     settings: BrowserSettings
     tab_content: dict[str, PageResult | None]  # Maps tab ID to PageResult
 
-    BINDINGS = [  # noqa: RUF012
-        Binding(
-            key="q",
-            action="quit",
-            description="Quit the app",
-            priority=True,
-        ),
-        Binding(
-            key="question_mark",
-            action="help",
-            description="Show help screen",
-            key_display="?",
-            priority=True,
-        ),
-        #
-        # Move around with WASD
-        Binding(
-            key="w",
-            action="up",
-            description="Scroll up",
-            tooltip="Scroll up",
-        ),
-        Binding(
-            key="s",
-            action="down",
-            description="Scroll down",
-            tooltip="Scroll down",
-        ),
-        Binding(
-            key="a",
-            action="left",
-            description="Go left",
-            tooltip="Go left",
-        ),
-        Binding(
-            key="d",
-            action="right",
-            description="Go right",
-            tooltip="Go right",
-        ),
-        #
-        # Refresh with r, ctrl+r or F5
-        Binding(
-            key="r",
-            action="refresh",
-            description="Refresh the page",
-            show=False,
-        ),
-        Binding(
-            key="f5",
-            action="refresh",
-            description="Refresh the page",
-            show=False,
-        ),
-        Binding(
-            key="ctrl+r",
-            action="refresh",
-            description="Refresh the page",
-            priority=True,
-        ),
-        #
-        # URL entry
-        Binding(
-            key="ctrl+e",
-            action="open_url",
-            description="Enter a new URL",
-            priority=True,
-        ),
-        #
-        # Search within page
-        Binding(
-            key="ctrl+f",
-            action="search",
-            description="Search in page",
-            priority=True,
-        ),
-        #
-        # Search within all tabs
-        Binding(
-            key="ctrl+shift+f",
-            action="search",
-            description="Search in all tabs",
-            priority=True,
-        ),
-        #
-        # Tab management
-        Binding(
-            key="ctrl+t",
-            action="new_tab",
-            description="Open new tab",
-            priority=True,
-        ),
-        Binding(
-            key="ctrl+w",
-            action="close_tab",
-            description="Close current tab",
-            priority=True,
-        ),
-        Binding(
-            key="ctrl+pageup",
-            action="previous_tab",
-            description="Previous tab",
-            priority=True,
-        ),
-        Binding(
-            key="ctrl+pagedown",
-            action="next_tab",
-            description="Next tab",
-            priority=True,
-        ),
-        Binding(
-            key="alt+z",
-            action="previous_tab",
-            description="Previous tab",
-            priority=True,
-        ),
-        Binding(
-            key="alt+x",
-            action="next_tab",
-            description="Next tab",
-            priority=True,
-        ),
-        #
-        # Theme toggle
-        Binding(
-            key="ctrl+l",
-            action="toggle_theme",
-            description="Toggle theme",
-            priority=True,
-        ),
-    ]
+    BINDINGS = get_hotkeys()
 
     def _get_active_tab_id(self) -> str | None:
         """Get the ID of the currently active tab.
@@ -525,7 +225,7 @@ class JuiceboxApp(App[None]):
 
     def action_search(self) -> None:
         """Search within the current page."""
-        self.sub_title = "Search not implemented yet."
+        do_action_search(self)
 
     def action_up(self) -> None:
         """Scroll up the content."""
@@ -738,3 +438,9 @@ class JuiceboxApp(App[None]):
             self.tab_content[tab_id] = None
 
         self.query_one(Tabs).focus()
+
+
+app = JuiceboxApp()
+
+if __name__ == "__main__":
+    app.run()

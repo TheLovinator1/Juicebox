@@ -27,8 +27,8 @@ from typing import TypeVar
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from juicebox.app import BrowserSettings
     from juicebox.app import PageResult
+    from juicebox.settings import BrowserSettings
 
 T = TypeVar("T")
 
