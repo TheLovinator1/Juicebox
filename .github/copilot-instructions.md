@@ -6,7 +6,7 @@ Juicebox is a Python TUI (Terminal User Interface) web browser built with Textua
 
 **Core Stack:**
 - **UI Framework:** Textual (with syntax highlighting support)
-- **HTTP Client:** httpx
+- **HTTP Client:** curl_cffi
 - **HTML Processing:** markdownify (converts HTML to markdown for terminal display)
 - **Build System:** uv (fast Python package manager with uv_build backend)
 
@@ -102,7 +102,7 @@ src/juicebox/
 - Enable syntax highlighting via `textual[syntax]` extra
 
 ### HTTP & Rendering Pipeline
-1. **Fetch:** Check for native APIs first (WordPress REST API, etc.), fall back to httpx for HTML
+1. **Fetch:** Check for native APIs first (WordPress REST API, etc.), fall back to curl_cffi for HTML
 2. **Convert:** Use markdownify to convert HTML → Markdown for terminal display (when scraping)
 3. **Display:** Render markdown through Textual's Rich integration
 
