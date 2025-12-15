@@ -1,9 +1,14 @@
 {
     "cSpell.words": [
+        "docstrings",
         "Hellsén",
         "Joakim",
         "Juicebox",
+        "markdownify",
+        "pycodestyle",
+        "pydocstyle",
         "pytest",
-        "pyupgrade"
+        "pyupgrade",
+        "WASD"
     ]
 }
