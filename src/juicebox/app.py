@@ -305,12 +305,14 @@ class JuiceboxApp(App[None]):
             key="q",
             action="quit",
             description="Quit the app",
+            priority=True,
         ),
         Binding(
             key="question_mark",
             action="help",
             description="Show help screen",
             key_display="?",
+            priority=True,
         ),
         #
         # Move around with WASD
@@ -356,6 +358,7 @@ class JuiceboxApp(App[None]):
             key="ctrl+r",
             action="refresh",
             description="Refresh the page",
+            priority=True,
         ),
         #
         # URL entry
@@ -363,6 +366,7 @@ class JuiceboxApp(App[None]):
             key="ctrl+e",
             action="open_url",
             description="Enter a new URL",
+            priority=True,
         ),
         #
         # Search within page
@@ -370,6 +374,7 @@ class JuiceboxApp(App[None]):
             key="ctrl+f",
             action="search",
             description="Search in page",
+            priority=True,
         ),
         #
         # Search within all tabs
@@ -377,6 +382,7 @@ class JuiceboxApp(App[None]):
             key="ctrl+shift+f",
             action="search",
             description="Search in all tabs",
+            priority=True,
         ),
         #
         # Tab management
@@ -384,31 +390,37 @@ class JuiceboxApp(App[None]):
             key="ctrl+t",
             action="new_tab",
             description="Open new tab",
+            priority=True,
         ),
         Binding(
             key="ctrl+w",
             action="close_tab",
             description="Close current tab",
+            priority=True,
         ),
         Binding(
             key="ctrl+pageup",
             action="previous_tab",
             description="Previous tab",
+            priority=True,
         ),
         Binding(
             key="ctrl+pagedown",
             action="next_tab",
             description="Next tab",
+            priority=True,
         ),
         Binding(
             key="alt+z",
             action="previous_tab",
             description="Previous tab",
+            priority=True,
         ),
         Binding(
             key="alt+x",
             action="next_tab",
             description="Next tab",
+            priority=True,
         ),
         #
         # Dark mode toggle
@@ -416,6 +428,7 @@ class JuiceboxApp(App[None]):
             key="ctrl+l",
             action="toggle_dark",
             description="Toggle dark mode",
+            priority=True,
         ),
     ]
 
