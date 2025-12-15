@@ -2,6 +2,8 @@
     "cSpell.words": [
         "Hellsén",
         "Joakim",
-        "Juicebox"
+        "Juicebox",
+        "pytest",
+        "pyupgrade"
     ]
 }
