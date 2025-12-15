@@ -169,7 +169,8 @@ class URLSuggester(Suggester):
         Returns:
             str | None: A suggested URL completion, or None if no match found.
         """
-        if not value:
+        # Don't suggest anything if value is empty or just whitespace
+        if not value or not value.strip():
             return None
 
         # Refresh history on each call to get latest URLs
@@ -527,6 +528,8 @@ class JuiceboxApp(App[None]):
             )
             self.query_one(Markdown).mount(input_widget, before=self.query_one(Footer))
 
+        # Clear the input value and any suggestion when opening URL input
+        input_widget.value = ""
         input_widget.focus()
 
     def action_new_tab(self) -> None:
@@ -634,6 +637,15 @@ class JuiceboxApp(App[None]):
         self.markdown.update(content)
         self.title = f"Juicebox - {page_result.url}"
         self.sub_title = f"Status: {page_result.status}"
+
+        # Hide the input widget and restore focus to tabs
+        try:
+            input_widget: Input = self.query_one("#url_input", Input)
+            input_widget.remove()
+            self.query_one(Tabs).disabled = False
+            self.query_one(Tabs).focus()
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     def compose(self) -> ComposeResult:
         """Apply the UI layout.
