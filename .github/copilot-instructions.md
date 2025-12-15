@@ -61,6 +61,7 @@ The project uses pre-commit with these tools:
 - **pyupgrade:** Enforces Python 3.11+ syntax (use `--py311-plus` despite 3.14 requirement)
 - **add-trailing-comma:** Adds trailing commas for multi-line constructs
 - Standard hooks: AST validation, TOML checks, EOF fixers, whitespace trimming
+- Pre-commit hooks are run with `prek run -a`
 
 Run manually: `uv run pre-commit run --all-files`
 

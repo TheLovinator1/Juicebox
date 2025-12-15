@@ -8,6 +8,7 @@
         "Juicebox",
         "Lovinator",
         "markdownify",
+        "prek",
         "pycodestyle",
         "pydocstyle",
         "pytest",
