@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.suggester import Suggester
+from textual.theme import Theme
 from textual.widgets import (
     Footer,
     Header,
@@ -23,6 +24,8 @@ from textual.widgets import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from textual.theme import Theme
 
 # History and data that needs to persist between runs
 DATA_DIR: Path = user_data_path(
@@ -423,11 +426,11 @@ class JuiceboxApp(App[None]):
             priority=True,
         ),
         #
-        # Dark mode toggle
+        # Theme toggle
         Binding(
             key="ctrl+l",
-            action="toggle_dark",
-            description="Toggle dark mode",
+            action="toggle_theme",
+            description="Toggle theme",
             priority=True,
         ),
     ]
@@ -525,7 +528,6 @@ class JuiceboxApp(App[None]):
             self.query_one(Markdown).mount(input_widget, before=self.query_one(Footer))
 
         input_widget.focus()
-        self.notify("Prompting for new URL")
 
     def action_new_tab(self) -> None:
         """Open a new tab."""
@@ -537,8 +539,7 @@ class JuiceboxApp(App[None]):
         # Initialize empty content for the new tab
         if new_tab.id:
             self.tab_content[new_tab.id] = None
-
-        self.notify(f"Opened Tab {self.current_tabs}", timeout=1)
+            tabs.show(new_tab.id)
 
     def action_close_tab(self) -> None:
         """Close the current tab."""
@@ -572,17 +573,32 @@ class JuiceboxApp(App[None]):
         self._update_markdown_from_tab()
         self.notify("Switched to previous tab", timeout=1)
 
-    def action_toggle_dark(self) -> None:
-        """Toggle dark mode."""
-        if self.theme == "textual-dark":
-            theme: Literal["textual-dark", "textual-light"] = "textual-light"
-        else:
-            theme = "textual-dark"
+    def action_toggle_theme(self) -> None:
+        """Toggle between all the available themes."""
+        # All available themes (all built-in themes plus any that have been registered).
+        # A dictionary mapping theme names to Theme instances.
+        available_themes: dict[str, Theme] = self.available_themes
+        current_theme: Theme = self.current_theme
 
-        self.theme = theme
-        self.settings.theme = theme  # Update settings
+        # Find the next theme in the list
+        theme_names: list[str] = list(available_themes.keys())
+        try:
+            current_index: int = theme_names.index(current_theme.name)
+            next_index: int = (current_index + 1) % len(theme_names)
+        except ValueError:
+            next_index = 0  # Fallback to first theme if current not found
+            self.notify(
+                message="Current theme not found in available themes, switching to first theme.",  # noqa: E501
+                timeout=2,
+                severity="error",
+            )
 
-        self.notify(f"Toggled to {self.theme} theme", timeout=1)
+        next_theme_name: str = theme_names[next_index]
+        self.theme = next_theme_name
+        self.notify(
+            f"Switched to theme: {next_theme_name} ({next_index + 1}/{len(theme_names)})",  # noqa: E501
+            timeout=1,
+        )
 
     def on_tabs_tab_activated(self) -> None:
         """Handle tab activation (switching tabs)."""
