@@ -2,17 +2,28 @@
     "cSpell.words": [
         "appauthor",
         "appname",
+        "awardings",
+        "cffi",
+        "crosspostable",
+        "crossposts",
         "docstrings",
         "Hellsén",
+        "isort",
         "Joakim",
         "Juicebox",
         "Lovinator",
         "markdownify",
+        "modhash",
+        "platformdirs",
         "prek",
+        "pwls",
         "pycodestyle",
+        "pydantic",
         "pydocstyle",
         "pytest",
         "pyupgrade",
+        "selftext",
+        "stickied",
         "WASD"
     ]
 }

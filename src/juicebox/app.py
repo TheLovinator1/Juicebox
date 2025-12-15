@@ -1,31 +1,41 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
+from typing import Literal
+from urllib.parse import urlparse
 
 from curl_cffi import requests
 from curl_cffi.requests import BrowserTypeLiteral  # noqa: TC002
 from markdownify import markdownify as html_to_md
-from platformdirs import user_config_path, user_data_path
-from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from textual.app import App, ComposeResult
+from platformdirs import user_config_path
+from platformdirs import user_data_path
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict
+from textual.app import App
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.suggester import Suggester
 from textual.theme import Theme
-from textual.widgets import (
-    Footer,
-    Header,
-    Input,
-    Markdown,
-    Tab,
-    Tabs,
-)
+from textual.widgets import Footer
+from textual.widgets import Header
+from textual.widgets import Input
+from textual.widgets import Markdown
+from textual.widgets import Tab
+from textual.widgets import Tabs
+
+from juicebox.interactions import get_interaction
+from juicebox.interactions.loader import load_interactions
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from textual.theme import Theme
+
 
 # History and data that needs to persist between runs
 DATA_DIR: Path = user_data_path(
@@ -94,7 +104,7 @@ def get_history_file() -> Path:
     Returns:
         Path: The path to the history file.
     """
-    # TODO(TheLovinator): Migrate to a database or more structured format later  # noqa: TD003
+    # TODO(TheLovinator): Migrate to a database or more structured format later  # noqa: E501, TD003
     return DATA_DIR / "history.json"
 
 
@@ -250,7 +260,8 @@ class PageResult(BaseModel):
 def fetch_markdown(url: str, settings: BrowserSettings | None = None) -> PageResult:
     """Fetch a URL and convert its HTML to Markdown.
 
-    If the response contains non-HTML, we still show the text content.
+    First checks if there's a custom interaction handler for the domain.
+    If not, fetches HTML and converts to Markdown.
 
     Args:
         url: The URL to fetch.
@@ -270,6 +281,27 @@ def fetch_markdown(url: str, settings: BrowserSettings | None = None) -> PageRes
 
     if "://" not in normalized:
         normalized = f"{settings.default_scheme}://{normalized}"
+
+    # Check for custom interaction handlers
+    parsed_url = urlparse(normalized)
+    domain = parsed_url.netloc.lower()
+
+    # Try to find a handler for this domain
+    # First try exact match
+    handler: Callable[[str, BrowserSettings], PageResult] | None = get_interaction(
+        domain
+    )
+    if handler is not None:
+        return handler(normalized, settings)
+
+    # If not found, try removing common prefixes (www, old, new, m, mobile, compact)
+    domain_parts: list[str] = domain.split(".")
+    if len(domain_parts) > 2:  # noqa: PLR2004
+        # Try removing the first subdomain
+        domain_without_prefix = ".".join(domain_parts[1:])
+        handler = get_interaction(domain_without_prefix)
+        if handler is not None:
+            return handler(normalized, settings)
 
     try:
         # Use curl_cffi for HTTP(S), with a reasonable UA
@@ -685,6 +717,9 @@ class JuiceboxApp(App[None]):
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
+        # Load custom interaction handlers
+        load_interactions()
+
         # Load settings
         self.settings = BrowserSettings()
 
