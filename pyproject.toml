@@ -1,0 +1,25 @@
+[project]
+name = "Juicebox"
+version = "0.1.0"
+description = "Juicebox is a Python TUI web browser for people who thought Lynx was too mainstream."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Joakim Hellsén", email = "tlovinator@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Environment :: Console",
+]
+
+requires-python = ">=3.14"
+dependencies = ["httpx>=0.28.1", "markdownify>=1.2.2", "textual[syntax]>=6.9.0"]
+
+[dependency-groups]
+dev = ["pytest>=9.0.2", "textual-dev>=1.8.0"]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
