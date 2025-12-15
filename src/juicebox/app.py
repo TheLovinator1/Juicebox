@@ -539,10 +539,28 @@ class JuiceboxApp(App[None]):
         new_tab: Tab = Tab(f"Tab {self.current_tabs}")
         tabs.add_tab(new_tab)
 
-        # Initialize empty content for the new tab
-        if new_tab.id:
-            self.tab_content[new_tab.id] = None
-            tabs.show(new_tab.id)
+        # Initialize empty content for the new tab and immediately focus it
+        new_tab_id: str | None = new_tab.id
+        if new_tab_id:
+            self.tab_content[new_tab_id] = None
+
+            max_activation_attempts: int = 3
+
+            def activate_and_prompt(attempt: int = 0) -> None:
+                try:
+                    tabs.active = new_tab_id
+                except ValueError:
+                    # Tab may not be mounted yet; retry a few times.
+                    if attempt < max_activation_attempts:
+                        self.call_after_refresh(
+                            lambda: activate_and_prompt(attempt + 1),
+                        )
+                    return
+
+                self._update_markdown_from_tab()
+                self.action_open_url()
+
+            self.call_after_refresh(activate_and_prompt)
 
     def action_close_tab(self) -> None:
         """Close the current tab."""
@@ -567,14 +585,12 @@ class JuiceboxApp(App[None]):
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_next_tab()
         self._update_markdown_from_tab()
-        self.notify("Switched to next tab", timeout=1)
 
     def action_previous_tab(self) -> None:
         """Switch to the previous tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_previous_tab()
         self._update_markdown_from_tab()
-        self.notify("Switched to previous tab", timeout=1)
 
     def action_toggle_theme(self) -> None:
         """Toggle between all the available themes."""
