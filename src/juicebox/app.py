@@ -298,6 +298,7 @@ class JuiceboxApp(App[None]):
     markdown: Markdown
     current_tabs: int = 1
     settings: BrowserSettings
+    tab_content: dict[str, PageResult | None]  # Maps tab ID to PageResult
 
     BINDINGS = [  # noqa: RUF012
         Binding(
@@ -418,6 +419,38 @@ class JuiceboxApp(App[None]):
         ),
     ]
 
+    def _get_active_tab_id(self) -> str | None:
+        """Get the ID of the currently active tab.
+
+        Returns:
+            The active tab ID, or None if no tab is active.
+        """
+        tabs: Tabs = self.query_one(Tabs)
+        active_tab: Tab | None = tabs.active_tab
+        return active_tab.id if active_tab else None
+
+    def _update_markdown_from_tab(self) -> None:
+        """Update the markdown display to show the current tab's content."""
+        tab_id: str | None = self._get_active_tab_id()
+        if not tab_id:
+            return
+
+        page_result: PageResult | None = self.tab_content.get(tab_id)
+        if page_result:
+            self.current_page = page_result
+            if page_result.error:
+                content: str = f"# Error fetching page\n\n{page_result.error}\n"
+            else:
+                content = page_result.markdown
+            self.markdown.update(content)
+            self.title = f"Juicebox - {page_result.url}"
+            self.sub_title = f"Status: {page_result.status}"
+        else:
+            self.current_page = None
+            self.markdown.update("")
+            self.title = "Juicebox"
+            self.sub_title = "about:juicebox"
+
     def action_refresh(self) -> None:
         """Refresh the current page."""
         if self.current_page:
@@ -427,6 +460,12 @@ class JuiceboxApp(App[None]):
                 self.current_page.url,
                 self.settings,
             )
+
+            # Update the tab content
+            tab_id: str | None = self._get_active_tab_id()
+            if tab_id:
+                self.tab_content[tab_id] = page_result
+
             self.current_page = page_result
             self.markdown.update(page_result.markdown)
             self.sub_title = f"Status: {page_result.status}"
@@ -476,33 +515,48 @@ class JuiceboxApp(App[None]):
         self.notify("Prompting for new URL")
 
     def action_new_tab(self) -> None:
-        """Open a new tab (not implemented)."""
+        """Open a new tab."""
         tabs: Tabs = self.query_one(Tabs)
-        tabs.add_tab(Tab(f"Tab {self.current_tabs}"))
         self.current_tabs += 1
+        new_tab: Tab = Tab(f"Tab {self.current_tabs}")
+        tabs.add_tab(new_tab)
+
+        # Initialize empty content for the new tab
+        if new_tab.id:
+            self.tab_content[new_tab.id] = None
 
         self.notify(f"Opened Tab {self.current_tabs}", timeout=1)
 
     def action_close_tab(self) -> None:
-        """Close the current tab (not implemented)."""
+        """Close the current tab."""
         tabs: Tabs = self.query_one(Tabs)
         active_tab: Tab | None = tabs.active_tab
-        if active_tab is not None:
-            tabs.remove_tab(active_tab.id)
+        if active_tab is not None and active_tab.id:
+            tab_id: str = active_tab.id
+            # Remove tab content from storage
+            if tab_id in self.tab_content:
+                del self.tab_content[tab_id]
+
+            tabs.remove_tab(tab_id)
             if self.current_tabs > 1:
                 self.current_tabs -= 1
             self.notify(f"Closed {active_tab.label}", timeout=1)
 
+            # Update display to show the newly active tab
+            self._update_markdown_from_tab()
+
     def action_next_tab(self) -> None:
-        """Switch to the next tab (not implemented)."""
+        """Switch to the next tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_next_tab()
+        self._update_markdown_from_tab()
         self.notify("Switched to next tab", timeout=1)
 
     def action_previous_tab(self) -> None:
-        """Switch to the previous tab (not implemented)."""
+        """Switch to the previous tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_previous_tab()
+        self._update_markdown_from_tab()
         self.notify("Switched to previous tab", timeout=1)
 
     def action_toggle_dark(self) -> None:
@@ -517,6 +571,10 @@ class JuiceboxApp(App[None]):
 
         self.notify(f"Toggled to {self.theme} theme", timeout=1)
 
+    def on_tabs_tab_activated(self) -> None:
+        """Handle tab activation (switching tabs)."""
+        self._update_markdown_from_tab()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle URL input submission.
 
@@ -529,6 +587,12 @@ class JuiceboxApp(App[None]):
         self.refresh(layout=True)
 
         page_result: PageResult = fetch_markdown(url, self.settings)
+
+        # Store the result for the current tab
+        tab_id: str | None = self._get_active_tab_id()
+        if tab_id:
+            self.tab_content[tab_id] = page_result
+
         self.current_page = page_result
 
         if page_result.error:
@@ -572,5 +636,13 @@ class JuiceboxApp(App[None]):
 
         self.title = "Juicebox"
         self.sub_title = "about:juicebox"
+
+        # Initialize tab content dictionary
+        self.tab_content = {}
+
+        # Initialize the first tab
+        tab_id: str | None = self._get_active_tab_id()
+        if tab_id:
+            self.tab_content[tab_id] = None
 
         self.query_one(Tabs).focus()
