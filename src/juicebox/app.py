@@ -389,6 +389,27 @@ class JuiceboxApp(App[None]):
             action="close_tab",
             description="Close current tab",
         ),
+        Binding(
+            key="ctrl+pageup",
+            action="previous_tab",
+            description="Previous tab",
+        ),
+        Binding(
+            key="ctrl+pagedown",
+            action="next_tab",
+            description="Next tab",
+        ),
+        Binding(
+            key="alt+z",
+            action="previous_tab",
+            description="Previous tab",
+        ),
+        Binding(
+            key="alt+x",
+            action="next_tab",
+            description="Next tab",
+        ),
+        #
         # Dark mode toggle
         Binding(
             key="ctrl+l",
@@ -471,6 +492,18 @@ class JuiceboxApp(App[None]):
             if self.current_tabs > 1:
                 self.current_tabs -= 1
             self.notify(f"Closed {active_tab.label}", timeout=1)
+
+    def action_next_tab(self) -> None:
+        """Switch to the next tab (not implemented)."""
+        tabs: Tabs = self.query_one(Tabs)
+        tabs.action_next_tab()
+        self.notify("Switched to next tab", timeout=1)
+
+    def action_previous_tab(self) -> None:
+        """Switch to the previous tab (not implemented)."""
+        tabs: Tabs = self.query_one(Tabs)
+        tabs.action_previous_tab()
+        self.notify("Switched to previous tab", timeout=1)
 
     def action_toggle_dark(self) -> None:
         """Toggle dark mode."""
