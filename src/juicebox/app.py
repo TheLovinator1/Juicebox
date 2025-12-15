@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+import json
+from typing import TYPE_CHECKING, Literal
 
 from curl_cffi import requests
+from curl_cffi.requests import BrowserTypeLiteral  # noqa: TC002
 from markdownify import markdownify as html_to_md
+from platformdirs import user_config_path, user_data_path
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.suggester import Suggester
 from textual.widgets import (
     Footer,
     Header,
@@ -16,9 +21,174 @@ from textual.widgets import (
     Tabs,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-@dataclass
-class PageResult:
+# History and data that needs to persist between runs
+DATA_DIR: Path = user_data_path(
+    appname="Juicebox",
+    appauthor="TheLovinator",
+    roaming=True,
+    ensure_exists=True,
+)
+
+# Configuration directory - settings etc.
+CONFIG_DIR: Path = user_config_path(
+    appname="Juicebox",
+    appauthor="TheLovinator",
+    roaming=True,
+    ensure_exists=True,
+)
+
+
+class BrowserSettings(BaseSettings):
+    """Browser configuration settings.
+
+    Uses pydantic-settings to load from environment variables and config files.
+    Settings can be overridden via JUICEBOX_* environment variables.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="JUICEBOX_",
+        env_file=CONFIG_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    theme: Literal["textual-dark", "textual-light"] = Field(
+        default="textual-dark",
+        description="Default theme for the browser",
+    )
+
+    history_limit: int = Field(
+        default=1000,
+        gt=0,
+        le=10000,
+        description="Maximum number of URLs to keep in history",
+    )
+
+    request_timeout: int = Field(
+        default=20,
+        gt=0,
+        le=120,
+        description="HTTP request timeout in seconds",
+    )
+
+    user_agent: BrowserTypeLiteral = Field(
+        default="firefox",
+        description="Browser to impersonate for curl_cffi",
+    )
+
+    default_scheme: str = Field(
+        default="https",
+        description="Default URL scheme if none provided",
+    )
+
+
+def get_history_file() -> Path:
+    """Get the path to the history file.
+
+    Returns:
+        Path: The path to the history file.
+    """
+    # TODO(TheLovinator): Migrate to a database or more structured format later  # noqa: TD003
+    return DATA_DIR / "history.json"
+
+
+def load_history() -> list[str]:
+    """Load URL history from the history file.
+
+    Returns:
+        list[str]: A list of URLs from history, newest first.
+            Returns empty list if file doesn't exist.
+    """
+    history_file: Path = get_history_file()
+    if not history_file.exists():
+        return []
+
+    try:
+        with history_file.open("r", encoding="utf-8") as f:
+            data: list[str] = json.load(f)
+            return data
+    except json.JSONDecodeError, OSError:
+        return []
+
+
+def save_url_to_history(url: str, settings: BrowserSettings | None = None) -> None:
+    """Save a URL to the history file.
+
+    URLs are stored with newest first. Duplicates are removed (moved to top).
+    Maximum URLs kept is determined by settings.history_limit.
+
+    Args:
+        url: The URL to save to history.
+        settings: Browser settings to use. Creates default if not provided.
+
+    """
+    if settings is None:
+        settings = BrowserSettings()
+
+    history: list[str] = load_history()
+
+    # Remove the URL if it already exists (we'll add it to the front)
+    if url in history:
+        history.remove(url)
+
+    # Add URL to the front
+    history.insert(0, url)
+
+    # Keep only the most recent URLs based on settings
+    history = history[: settings.history_limit]
+
+    # Save to file
+    history_file: Path = get_history_file()
+    try:
+        with history_file.open("w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+    except OSError:
+        pass  # Fail silently if we can't write history
+
+
+class URLSuggester(Suggester):
+    """Suggester that provides URL completions from browsing history."""
+
+    def __init__(self) -> None:
+        """Initialize the URLSuggester with cached history."""
+        super().__init__(use_cache=False, case_sensitive=False)
+        self._history: list[str] = []
+
+    async def get_suggestion(self, value: str) -> str | None:
+        """Get a URL suggestion based on the current input value.
+
+        Args:
+            value: The current input value.
+
+        Returns:
+            str | None: A suggested URL completion, or None if no match found.
+        """
+        if not value:
+            return None
+
+        # Refresh history on each call to get latest URLs
+        self._history = load_history()
+
+        # Find first matching URL (case-insensitive)
+        value_lower: str = value.lower()
+        for url in self._history:
+            # Strip common prefixes for matching
+            url_normalized: str = url.lower()
+            url_normalized = url_normalized.removeprefix("https://").removeprefix(
+                "http://"
+            )
+            url_normalized = url_normalized.removeprefix("www.")
+
+            if url_normalized.startswith(value_lower):
+                return url
+
+        return None
+
+
+class PageResult(BaseModel):
     """Represents the result of processing a web page.
 
     Attributes:
@@ -29,45 +199,80 @@ class PageResult:
 
     """
 
-    url: str
-    """The URL of the processed page."""
+    url: str = Field(
+        ...,
+        description="The URL of the processed page",
+        min_length=1,
+    )
 
-    status: int
-    """The HTTP status code returned by the page."""
+    status: int = Field(
+        ...,
+        description="The HTTP status code returned by the page",
+        ge=0,
+        le=999,
+    )
 
-    markdown: str
-    """The markdown representation of the page content."""
+    markdown: str = Field(
+        default="",
+        description="The markdown representation of the page content",
+    )
 
-    error: str | None = None
-    """Optional error message if processing failed."""
+    error: str | None = Field(
+        default=None,
+        description="Optional error message if processing failed",
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url_not_empty(cls, v: str) -> str:
+        """Ensure URL is not empty or whitespace only.
+
+        Args:
+            v: The URL string to validate.
+
+        Returns:
+            The validated URL string.
+
+        Raises:
+            ValueError: If URL is empty or whitespace only.
+
+        """
+        if not v or not v.strip():
+            msg = "URL cannot be empty"
+            raise ValueError(msg)
+        return v.strip()
 
 
-def fetch_markdown(url: str) -> PageResult:
+def fetch_markdown(url: str, settings: BrowserSettings | None = None) -> PageResult:
     """Fetch a URL and convert its HTML to Markdown.
 
     If the response contains non-HTML, we still show the text content.
 
     Args:
         url: The URL to fetch.
+        settings: Browser settings to use. Creates default if not provided.
 
     Returns:
         A PageResult containing the URL, status code, markdown content, and any error.
 
     """
+    if settings is None:
+        settings = BrowserSettings()
+
     # Basic scheme defaulting: if user typed a bare domain, assume https
     normalized: str = url.strip()
     if not normalized:
         return PageResult(url=url, status=0, markdown="", error="Empty URL")
 
     if "://" not in normalized:
-        normalized = f"https://{normalized}"
+        normalized = f"{settings.default_scheme}://{normalized}"
 
     try:
         # Use curl_cffi for HTTP(S), with a reasonable UA
         resp: requests.Response = requests.get(
             normalized,
-            timeout=20,
-            impersonate="firefox",
+            timeout=settings.request_timeout,
+            impersonate=settings.user_agent,
         )
         content_type: str = resp.headers.get("content-type", "").lower()
         text: str = resp.text or ""
@@ -92,6 +297,7 @@ class JuiceboxApp(App[None]):
     current_page: PageResult | None = None
     markdown: Markdown
     current_tabs: int = 1
+    settings: BrowserSettings
 
     BINDINGS = [  # noqa: RUF012
         Binding(
@@ -196,7 +402,10 @@ class JuiceboxApp(App[None]):
         if self.current_page:
             self.sub_title = f"Refreshing {self.current_page.url}..."
             self.refresh(layout=True)
-            page_result: PageResult = fetch_markdown(self.current_page.url)
+            page_result: PageResult = fetch_markdown(
+                self.current_page.url,
+                self.settings,
+            )
             self.current_page = page_result
             self.markdown.update(page_result.markdown)
             self.sub_title = f"Status: {page_result.status}"
@@ -238,6 +447,7 @@ class JuiceboxApp(App[None]):
             input_widget = Input(
                 placeholder="Enter URL and press Enter",
                 id="url_input",
+                suggester=URLSuggester(),
             )
             self.query_one(Markdown).mount(input_widget, before=self.query_one(Footer))
 
@@ -270,6 +480,7 @@ class JuiceboxApp(App[None]):
             theme = "textual-dark"
 
         self.theme = theme
+        self.settings.theme = theme  # Update settings
 
         self.notify(f"Toggled to {self.theme} theme", timeout=1)
 
@@ -284,13 +495,15 @@ class JuiceboxApp(App[None]):
         self.sub_title = f"Fetching {url}..."
         self.refresh(layout=True)
 
-        page_result: PageResult = fetch_markdown(url)
+        page_result: PageResult = fetch_markdown(url, self.settings)
         self.current_page = page_result
 
         if page_result.error:
             content: str = f"# Error fetching page\n\n{page_result.error}\n"
         else:
             content = page_result.markdown
+            # Save to history only if successful
+            save_url_to_history(page_result.url, self.settings)
 
         self.markdown.update(content)
         self.title = f"Juicebox - {page_result.url}"
@@ -318,6 +531,12 @@ class JuiceboxApp(App[None]):
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
+        # Load settings
+        self.settings = BrowserSettings()
+
+        # Apply theme from settings
+        self.theme = self.settings.theme
+
         self.title = "Juicebox"
         self.sub_title = "about:juicebox"
 

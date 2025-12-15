@@ -17,7 +17,11 @@ classifiers = [
 requires-python = ">=3.14"
 dependencies = [
     "curl_cffi>=0.7.2",
+    "json5>=0.12.1",
     "markdownify>=1.2.2",
+    "platformdirs>=4.5.1",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
     "textual[syntax]>=6.9.0",
 ]
 
