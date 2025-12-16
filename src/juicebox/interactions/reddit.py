@@ -381,7 +381,7 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
             # Invalid JSON response
             json_error: str = f"Reddit API returned invalid JSON: {e}"
             return PageResult(
-                url=json_url,
+                url=url,
                 status=response.status_code,
                 markdown="",
                 error=json_error,
@@ -390,7 +390,7 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
             # Validation error from Pydantic
             validation_error: str = f"Failed to parse Reddit response: {e}"
             return PageResult(
-                url=json_url,
+                url=url,
                 status=response.status_code,
                 markdown="",
                 error=validation_error,
@@ -398,7 +398,7 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
 
         if rendered is not None:
             return PageResult(
-                url=json_url,
+                url=url,
                 status=response.status_code,
                 markdown=rendered,
             )
@@ -407,7 +407,7 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
         # This shouldn't happen as _render_reddit_markdown raises ValueError
         md_fallback: str = "```json\n" + (response.text or "") + "\n```"
         return PageResult(
-            url=json_url,
+            url=url,
             status=response.status_code,
             markdown=md_fallback,
         )
