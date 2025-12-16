@@ -105,7 +105,7 @@ class URLSuggester(Suggester):
             # Strip common prefixes for matching
             url_normalized: str = url.lower()
             url_normalized = url_normalized.removeprefix("https://").removeprefix(
-                "http://"
+                "http://",
             )
             url_normalized = url_normalized.removeprefix("www.")
 

@@ -153,4 +153,12 @@ def get_hotkeys() -> list[BindingType]:
             description="Toggle theme",
             priority=True,
         ),
+        #
+        # Image rendering method toggle
+        Binding(
+            key="ctrl+i",
+            action="toggle_image_method",
+            description="Toggle image rendering",
+            priority=True,
+        ),
     ]

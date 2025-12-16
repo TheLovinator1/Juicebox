@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
+from typing import Literal
+from typing import cast
 from urllib.parse import urlparse
 
 from curl_cffi import requests
 from markdownify import markdownify as html_to_md
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import field_validator
 from textual.app import App
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
 from textual.theme import Theme
+from textual.widget import Widget
 from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import Input
@@ -43,6 +49,9 @@ class PageResult(BaseModel):
 
     """
 
+    # Allow arbitrary widget types in `widgets` without requiring pydantic schemas
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     url: str = Field(
         ...,
         description="The URL of the processed page",
@@ -59,6 +68,11 @@ class PageResult(BaseModel):
     markdown: str = Field(
         default="",
         description="The markdown representation of the page content",
+    )
+
+    widgets: list[Widget] = Field(
+        default_factory=list[Widget],
+        description="List of widgets associated with the page",
     )
 
     error: str | None = Field(
@@ -179,7 +193,7 @@ class JuiceboxApp(App[None]):
         return active_tab.id if active_tab else None
 
     def _update_markdown_from_tab(self) -> None:
-        """Update the markdown display to show the current tab's content."""
+        """Update the content display to show the current tab's content."""
         tab_id: str | None = self._get_active_tab_id()
         if not tab_id:
             return
@@ -189,9 +203,25 @@ class JuiceboxApp(App[None]):
             self.current_page = page_result
             if page_result.error:
                 content: str = f"# Error fetching page\n\n{page_result.error}\n"
+                self.markdown.update(content)
+                # Clear any widget content
+                widgets_container: VerticalScroll = self.query_one(
+                    "#content_widgets",
+                    VerticalScroll,
+                )
+                widgets_container.remove_children()
+            # If widgets are present, render them; otherwise fallback to markdown
+            elif page_result.widgets:
+                widgets_container = self.query_one(
+                    "#content_widgets",
+                    VerticalScroll,
+                )
+                widgets_container.remove_children()
+                for w in page_result.widgets:
+                    widgets_container.mount(w)
+                self.markdown.update("")
             else:
-                content = page_result.markdown
-            self.markdown.update(content)
+                self.markdown.update(page_result.markdown)
             self.title = f"Juicebox - {page_result.url}"
             self.sub_title = f"Status: {page_result.status}"
         else:
@@ -216,7 +246,17 @@ class JuiceboxApp(App[None]):
                 self.tab_content[tab_id] = page_result
 
             self.current_page = page_result
-            self.markdown.update(page_result.markdown)
+            if page_result.widgets:
+                widgets_container: VerticalScroll = self.query_one(
+                    "#content_widgets",
+                    VerticalScroll,
+                )
+                widgets_container.remove_children()
+                for w in page_result.widgets:
+                    widgets_container.mount(w)
+                self.markdown.update("")
+            else:
+                self.markdown.update(page_result.markdown)
             self.sub_title = f"Status: {page_result.status}"
 
             self.notify(f"Refreshed {self.current_page.url}")
@@ -351,6 +391,34 @@ class JuiceboxApp(App[None]):
             timeout=1,
         )
 
+    def action_toggle_image_method(self) -> None:
+        """Toggle between image rendering methods."""
+        methods: list[str] = ["auto", "tgp", "sixel", "unicode", "halfcell"]
+        current: str = self.settings.image_method
+        try:
+            current_index: int = methods.index(current)
+            next_index: int = (current_index + 1) % len(methods)
+        except ValueError:
+            next_index = 0  # Fallback to auto if current not found
+
+        next_method = cast(
+            "Literal['auto', 'tgp', 'sixel', 'unicode', 'halfcell']",
+            methods[next_index],
+        )
+        self.settings.image_method = next_method
+
+        # Update environment variable so it's picked up on next fetch
+        os.environ["JUICEBOX_IMAGE_METHOD"] = next_method
+
+        self.notify(
+            f"Image method: {next_method} ({next_index + 1}/{len(methods)})",
+            timeout=2,
+        )
+
+        # Refresh to apply new image method
+        if self.current_page:
+            self.action_refresh()
+
     def on_tabs_tab_activated(self) -> None:
         """Handle tab activation (switching tabs)."""
         self._update_markdown_from_tab()
@@ -377,12 +445,23 @@ class JuiceboxApp(App[None]):
 
         if page_result.error:
             content: str = f"# Error fetching page\n\n{page_result.error}\n"
+            self.markdown.update(content)
+            # Clear any widget content on error
+            self.query_one("#content_widgets", VerticalScroll).remove_children()
         else:
-            content = page_result.markdown
             # Save to history only if successful
             save_url_to_history(page_result.url, self.settings)
-
-        self.markdown.update(content)
+            if page_result.widgets:
+                widgets_container: VerticalScroll = self.query_one(
+                    "#content_widgets",
+                    VerticalScroll,
+                )
+                widgets_container.remove_children()
+                for w in page_result.widgets:
+                    widgets_container.mount(w)
+                self.markdown.update("")
+            else:
+                self.markdown.update(page_result.markdown)
         self.title = f"Juicebox - {page_result.url}"
         self.sub_title = f"Status: {page_result.status}"
 
@@ -408,9 +487,10 @@ class JuiceboxApp(App[None]):
         yield Header(show_clock=True, id="header", icon="🧃")
         yield Tabs(Tab(f"Tab {self.current_tabs}"), id="tabs")
 
-        # The main browser area
+        # The main browser area: markdown plus a scroll container for widgets
         self.markdown = Markdown("", id="content")
         yield self.markdown
+        yield VerticalScroll(id="content_widgets")
 
         # Footer
         yield Footer()

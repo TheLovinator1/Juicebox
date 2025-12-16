@@ -1,5 +1,10 @@
+import contextlib
+import hashlib
 import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 from typing import cast
@@ -9,10 +14,20 @@ from urllib.parse import urlparse
 from curl_cffi import requests
 from pydantic import BaseModel
 from pydantic import ConfigDict
+from textual.widgets import Markdown
+from textual.widgets import Static
+from textual_image.widget import AutoImage
+from textual_image.widget import HalfcellImage
+from textual_image.widget import SixelImage
+from textual_image.widget import TGPImage
+from textual_image.widget import UnicodeImage
 
 from juicebox.app import BrowserSettings
 from juicebox.app import PageResult
 from juicebox.interactions import interaction
+
+if TYPE_CHECKING:
+    from textual.widget import Widget
 
 
 class PostData(BaseModel):
@@ -163,68 +178,164 @@ def create_markdown_for_post(post: Post) -> str:
 
     # Title and byline
     md_lines.extend((
-        f"## {post.data.title}",
-        f"*Posted by u/{post.data.author} in r/{post.data.subreddit}*",
-        "",
+        f"## [{post.data.title}]({post.data.url})",
+        f"*By /u/{post.data.author} in /r/{post.data.subreddit}*",
     ))
-
-    # Selftext (if any)
-    if post.data.selftext:
-        md_lines.extend((post.data.selftext, ""))
-
-    # Link (if not a self post)
-    if not post.data.is_self:
-        md_lines.extend((
-            f"**Link:** {post.data.url}",
-            "",
-        ))
 
     # Footer with score and comments
     md_lines.append(
-        f"👍 {post.data.score} | 💬 {post.data.num_comments} | "
-        f"[View on Reddit](https://reddit.com{post.data.permalink})",
+        f"👍 {post.data.score} | [{post.data.num_comments} Comments](https://reddit.com{post.data.permalink})",
     )
 
     return "\n".join(md_lines)
 
 
-def create_markdown_for_listing(
+def create_widgets_for_post(post: Post) -> list[Widget]:
+    """Build Textual widgets for a single Reddit post.
+
+    Returns:
+        List of widgets representing the post (title/byline, optional image, footer).
+    """
+    widgets: list[Widget] = []
+
+    # Title and byline as Markdown for rich rendering
+    title_md: str = (
+        f"## [{post.data.title}]({post.data.url})\n"
+        f"*By /u/{post.data.author} in /r/{post.data.subreddit}*"
+    )
+    widgets.append(Markdown(title_md))
+
+    # Optional thumbnail image if available
+    thumb: str = post.data.thumbnail or ""
+    if thumb and thumb.startswith("http") and thumb not in {"self", "default"}:
+        try:
+            # Download and cache the image locally, pass path to image widget
+            img_path: Path | None = _download_and_cache_image(thumb)
+            if img_path and img_path.exists():
+                # Get image method from env (set by app settings)
+                method = os.environ.get("JUICEBOX_IMAGE_METHOD", "auto")
+                img_widget = _create_image_widget(str(img_path), method)
+                if img_widget is not None:
+                    # Set compact size to prevent large vertical spacing
+                    img_widget.styles.width = "auto"
+                    img_widget.styles.height = "auto"
+                    img_widget.styles.max_height = 15
+                    widgets.append(img_widget)
+        except Exception:  # noqa: BLE001
+            # Ignore image rendering errors gracefully
+            ...
+
+    # Footer with score and comments
+    footer_md: str = f"👍 {post.data.score} | [{post.data.num_comments} Comments](https://reddit.com{post.data.permalink})"
+    widgets.extend((
+        Markdown(footer_md),
+        Static("—"),
+    ))
+
+    return widgets
+
+
+def _create_image_widget(path: str, method: str = "auto") -> Widget | None:
+    """Create an image widget for a given path based on preferred backend.
+
+    The widget is created with compact sizing to prevent excessive vertical spacing.
+
+    Args:
+        path: Filesystem path to the cached image.
+        method: Rendering method - one of 'auto', 'tgp', 'sixel', 'unicode', 'halfcell'.
+
+    Returns:
+        A Textual image widget instance or None if creation fails.
+    """
+    method = method.strip().lower()
+    try:
+        if method == "tgp":
+            return TGPImage(path)
+        if method == "sixel":
+            return SixelImage(path)
+        if method == "unicode":
+            return UnicodeImage(path)
+        if method == "halfcell":
+            return HalfcellImage(path)
+        # default fallback
+        return AutoImage(path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _download_and_cache_image(url: str) -> Path | None:
+    """Download a remote image and cache it under XDG cache, returning its path.
+
+    Cache location: ~/.cache/juicebox/images/<sha256>.bin
+    Cache location: ~/.cache/juicebox/images/<sha256>
+
+    Args:
+        url: Image URL.
+
+    Returns:
+        Path to the cached image file if successful, otherwise None.
+    """
+    # Build cache path
+    xdg_cache_home: str = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+    cache_dir = Path(xdg_cache_home) / "juicebox" / "images"
+    with contextlib.suppress(Exception):
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+    url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    cache_file: Path = cache_dir / url_hash
+
+    # Return cached file if present
+    with contextlib.suppress(Exception):
+        if cache_file.exists():
+            return cache_file
+
+    # Fetch from network
+    try:
+        resp: requests.Response = requests.get(url, timeout=10, impersonate="firefox")
+        http_ok = 200
+        if resp.status_code != http_ok:
+            return None
+        data: bytes = resp.content or b""
+        if not data:
+            return None
+        # Write to cache
+        with contextlib.suppress(Exception):
+            cache_file.write_bytes(data)
+
+    except Exception:  # noqa: BLE001
+        return None
+    else:
+        return cache_file
+
+
+def create_widgets_for_listing(
     listing: RedditResponse,
     subreddit: str | None = None,
-) -> str:
-    """Convert a Reddit listing to a markdown representation.
+) -> list[Widget]:
+    """Convert a Reddit listing to Textual widgets.
 
     Args:
         listing: The RedditResponse object containing the listing.
         subreddit: Optional subreddit name for the header.
 
     Returns:
-        A markdown string representing the listing.
+        A list of Textual widgets representing the listing.
     """
-    md_lines: list[str] = []
+    widgets: list[Widget] = []
 
-    # Add subreddit header if provided
-    if subreddit:
-        md_lines.extend((
-            f"# r/{subreddit}",
-            "",
-        ))
-    elif listing.data.children:
-        # Try to get subreddit from first post
-        first_subreddit = listing.data.children[0].data.subreddit
-        if first_subreddit:
-            md_lines.extend((
-                f"# r/{first_subreddit}",
-                "",
-            ))
+    # Add subreddit header if provided, otherwise infer from first post
+    header_sub: str | None = subreddit
+    if not header_sub and listing.data.children:
+        header_sub = listing.data.children[0].data.subreddit
 
-    # Add posts
-    for i, post in enumerate(listing.data.children):
-        if i > 0:
-            md_lines.append("\n---\n")
-        md_lines.append(create_markdown_for_post(post))
+    if header_sub:
+        widgets.append(Markdown(f"# r/{header_sub}"))
 
-    return "\n".join(md_lines)
+    # Add post widgets
+    for post in listing.data.children:
+        widgets.extend(create_widgets_for_post(post))
+
+    return widgets
 
 
 def get_reddit_path(url: str) -> RedditPathComponents:  # noqa: PLR0911
@@ -371,12 +482,13 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
                 error=error_msg,
             )
 
-        # Try to convert API response into readable markdown
-        rendered: str | None = None
+        # Try to convert API response into widgets/markdown
+        rendered_md: str | None = None
+        rendered_widgets: list[Widget] | None = None
         try:
             data_raw: object = json.loads(response.text or "null")
             data = cast("dict[str, Any] | list[dict[str, Any]]", data_raw)
-            rendered = _render_reddit_markdown(comps, data)
+            rendered_md, rendered_widgets = _render_reddit_content(comps, data)
         except json.JSONDecodeError as e:
             # Invalid JSON response
             json_error: str = f"Reddit API returned invalid JSON: {e}"
@@ -396,11 +508,19 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
                 error=validation_error,
             )
 
-        if rendered is not None:
+        if rendered_widgets:
             return PageResult(
                 url=url,
                 status=response.status_code,
-                markdown=rendered,
+                markdown="",
+                widgets=rendered_widgets,
+            )
+
+        if rendered_md is not None:
+            return PageResult(
+                url=url,
+                status=response.status_code,
+                markdown=rendered_md,
             )
 
         # If rendering returned None (unexpected data structure), show the raw JSON
@@ -416,18 +536,18 @@ def handle_reddit(url: str, settings: BrowserSettings) -> PageResult:  # noqa: P
         return PageResult(url=url, status=0, markdown="", error=str(e))
 
 
-def _render_reddit_markdown(
+def _render_reddit_content(
     comps: RedditPathComponents,
     data: dict[str, Any] | list[dict[str, Any]],
-) -> str | None:
-    """Render Reddit JSON to markdown if possible.
+) -> tuple[str | None, list[Widget] | None]:
+    """Render Reddit JSON to widgets (preferred) or markdown.
 
     Args:
         comps: Parsed path components for the original URL.
         data: Parsed JSON payload from Reddit.
 
     Returns:
-        A markdown string if rendering succeeded, otherwise None.
+        Tuple of (markdown, widgets). Prefer widgets when possible.
 
     Raises:
         ValueError: If the data structure doesn't match expected format.
@@ -437,10 +557,12 @@ def _render_reddit_markdown(
     if comps.type in {"home", "subreddit"} and isinstance(data, dict):
         try:
             listing: RedditResponse = RedditResponse.model_validate(data)
-            return create_markdown_for_listing(listing, comps.subreddit)
+            widgets = create_widgets_for_listing(listing, comps.subreddit)
         except Exception as e:
             msg = f"Failed to parse subreddit/home listing: {e}"
             raise ValueError(msg) from e
+        else:
+            return None, widgets
 
     # Post pages usually return a list where the first item is the post Listing
     if comps.type == "post" and isinstance(data, list) and data:
@@ -448,12 +570,13 @@ def _render_reddit_markdown(
             first: dict[str, Any] = data[0]
             listing0: RedditResponse = RedditResponse.model_validate(first)
             if listing0.data.children:
-                return create_markdown_for_post(listing0.data.children[0])
+                widgets = create_widgets_for_post(listing0.data.children[0])
+                return None, widgets
         except Exception as e:
             msg = f"Failed to parse post listing: {e}"
             raise ValueError(msg) from e
 
-    return None
+    return None, None
 
 
 __all__: list[str] = [

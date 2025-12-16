@@ -6,7 +6,6 @@ import pytest
 
 from juicebox.interactions.reddit import RedditPathComponents
 from juicebox.interactions.reddit import RedditResponse
-from juicebox.interactions.reddit import create_markdown_for_listing
 from juicebox.interactions.reddit import create_markdown_for_post
 from juicebox.interactions.reddit import get_reddit_path
 
@@ -157,24 +156,8 @@ def test_create_markdown_for_post_with_subreddit_fixture(
     md = create_markdown_for_post(post)
 
     # Verify the markdown contains expected components
-    assert "# The 2025 Game Awards Megathread" in md
+    assert "## [The 2025 Game Awards Megathread]" in md
     assert "rGamesMods" in md
     assert "Games" in md
     assert "👍" in md  # Score emoji
-    assert "💬" in md  # Comments emoji
     assert "reddit.com" in md
-
-
-def test_create_markdown_for_listing_with_subreddit_fixture(
-    subreddit_fixture: dict[str, Any],
-) -> None:
-    """Test listing markdown creation with a real subreddit fixture."""
-    listing = RedditResponse.model_validate(subreddit_fixture)
-
-    md = create_markdown_for_listing(listing)
-
-    # Verify the markdown contains expected components
-    assert "# r/Games" in md  # Subreddit header
-    assert "# The 2025 Game Awards Megathread" in md  # Post title
-    assert "rGamesMods" in md  # Author
-    assert "Games" in md  # Subreddit name in post

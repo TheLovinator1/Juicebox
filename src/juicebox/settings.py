@@ -71,3 +71,8 @@ class BrowserSettings(BaseSettings):
         default="https",
         description="Default URL scheme if none provided",
     )
+
+    image_method: Literal["auto", "tgp", "sixel", "unicode", "halfcell"] = Field(
+        default="auto",
+        description="Image rendering method for textual-image (auto, tgp, sixel, unicode, halfcell)",  # noqa: E501
+    )

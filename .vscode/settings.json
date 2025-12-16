@@ -7,6 +7,7 @@
         "crosspostable",
         "crossposts",
         "docstrings",
+        "Halfcell",
         "Hellsén",
         "isort",
         "Joakim",
@@ -23,6 +24,7 @@
         "pytest",
         "pyupgrade",
         "selftext",
+        "Sixel",
         "stickied",
         "WASD"
     ]
