@@ -24,6 +24,7 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "textual-image[textual]>=0.8.4",
     "textual[syntax]>=6.9.0",
+    "webscrapers",
 ]
 
 [dependency-groups]
@@ -72,3 +73,6 @@ lint.ignore = [
 
 [tool.ruff.lint.isort]
 force-single-line = true
+
+[tool.uv.sources]
+webscrapers = { git = "https://github.com/TheLovinator1/webscrapers" }
