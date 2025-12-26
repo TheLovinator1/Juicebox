@@ -67,12 +67,8 @@ class BrowserSettings(BaseSettings):
         description="Browser to impersonate for curl_cffi",
     )
 
-    default_scheme: str = Field(
-        default="https",
-        description="Default URL scheme if none provided",
-    )
-
+    # TODO(TheLovinator): We should make our own auto that picks the best available  # noqa: E501, TD003
     image_method: Literal["auto", "tgp", "sixel", "unicode", "halfcell"] = Field(
-        default="auto",
+        default="tgp",
         description="Image rendering method for textual-image (auto, tgp, sixel, unicode, halfcell)",  # noqa: E501
     )
