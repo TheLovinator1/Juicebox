@@ -72,6 +72,7 @@ def save_url_to_history(url: str, settings: BrowserSettings | None = None) -> No
         with history_file.open("w", encoding="utf-8") as f:
             json.dump(history, f, indent=2)
     except OSError:
+        # TODO(TheLovinator): Don't actually fail silently  # noqa: TD003
         pass  # Fail silently if we can't write history
 
 
