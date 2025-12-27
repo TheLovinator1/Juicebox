@@ -17,15 +17,20 @@ classifiers = [
 requires-python = ">=3.14"
 dependencies = [
     "curl_cffi>=0.7.2",
-    "json5>=0.12.1",
+    "lxml-html-clean>=0.4.3",
     "markdownify>=1.2.2",
     "platformdirs>=4.5.1",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
+    "readability-lxml>=0.8.4.1",
     "textual-image[textual]>=0.8.4",
     "textual[syntax]>=6.9.0",
+    "tldextract>=5.3.0",
     "webscrapers",
 ]
+
+[tool.uv.sources]
+webscrapers = { git = "https://github.com/TheLovinator1/webscrapers" }
 
 [dependency-groups]
 dev = ["pytest>=9.0.2", "textual-dev>=1.8.0"]
@@ -38,9 +43,10 @@ build-backend = "uv_build"
 preview = true
 fix = true
 unsafe-fixes = true
-lint.select = ["ALL"]
 lint.fixable = ["ALL"]
 lint.pydocstyle.convention = "google"
+lint.select = ["ALL"]
+lint.unfixable = ["F841"]             # Don't remove unused variables
 
 lint.ignore = [
     "CPY001", # Checks for the absence of copyright notices within Python files.
@@ -73,6 +79,3 @@ lint.ignore = [
 
 [tool.ruff.lint.isort]
 force-single-line = true
-
-[tool.uv.sources]
-webscrapers = { git = "https://github.com/TheLovinator1/webscrapers" }

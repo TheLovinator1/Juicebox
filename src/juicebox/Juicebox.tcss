@@ -1,0 +1,8 @@
+* {
+    scrollbar-size-vertical: 1;
+}
+
+RedditComment {
+    height: 1fr;
+    border-bottom: orange dashed;
+}

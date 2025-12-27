@@ -65,24 +65,24 @@ def get_hotkeys() -> list[BindingType]:
         ),
         #
         # Refresh with r, ctrl+r or F5
-        Binding(
-            key="r",
-            action="refresh",
-            description="Refresh the page",
-            show=False,
-        ),
-        Binding(
-            key="f5",
-            action="refresh",
-            description="Refresh the page",
-            show=False,
-        ),
-        Binding(
-            key="ctrl+r",
-            action="refresh",
-            description="Refresh the page",
-            priority=True,
-        ),
+        # Binding(
+        #     key="r",
+        #     action="refresh",
+        #     description="Refresh the page",
+        #     show=False,
+        # ),
+        # Binding(
+        #     key="f5",
+        #     action="refresh",
+        #     description="Refresh the page",
+        #     show=False,
+        # ),
+        # Binding(
+        #     key="ctrl+r",
+        #     action="refresh",
+        #     description="Refresh the page",
+        #     priority=True,
+        # ),
         #
         # URL entry
         Binding(
@@ -93,20 +93,20 @@ def get_hotkeys() -> list[BindingType]:
         ),
         #
         # Search within page
-        Binding(
-            key="ctrl+f",
-            action="search",
-            description="Search in page",
-            priority=True,
-        ),
-        #
-        # Search within all tabs
-        Binding(
-            key="ctrl+shift+f",
-            action="search",
-            description="Search in all tabs",
-            priority=True,
-        ),
+        # Binding(
+        #     key="ctrl+f",
+        #     action="search",
+        #     description="Search in page",
+        #     priority=True,
+        # ),
+        # #
+        # # Search within all tabs
+        # Binding(
+        #     key="ctrl+shift+f",
+        #     action="search",
+        #     description="Search in all tabs",
+        #     priority=True,
+        # ),
         #
         # Tab management
         Binding(

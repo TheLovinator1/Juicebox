@@ -4,19 +4,12 @@ import os
 from typing import TYPE_CHECKING
 from typing import Literal
 from typing import cast
-from urllib.parse import urlparse
 
-from curl_cffi import requests
-from markdownify import markdownify as html_to_md
-from pydantic import BaseModel
-from pydantic import ConfigDict
-from pydantic import Field
-from pydantic import field_validator
+import tldextract
 from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.theme import Theme
-from textual.widget import Widget
 from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import Input
@@ -24,151 +17,45 @@ from textual.widgets import Markdown
 from textual.widgets import Tab
 from textual.widgets import Tabs
 
-from juicebox.action.search import do_action_search
 from juicebox.history import URLSuggester
 from juicebox.history import save_url_to_history
 from juicebox.hotkeys import get_hotkeys
-from juicebox.interactions import get_interaction
-from juicebox.interactions.loader import load_interactions
 from juicebox.settings import BrowserSettings
+from juicebox.sites.reddit import handle_reddit
+from juicebox.sites.unknown import handle_unknown
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from textual.theme import Theme
 
-
-class PageResult(BaseModel):
-    """Represents the result of processing a web page.
-
-    Attributes:
-        url: The URL of the processed page.
-        status: The HTTP status code returned by the page.
-        markdown: The markdown representation of the page content.
-        error: Optional error message if processing failed.
-
-    """
-
-    # Allow arbitrary widget types in `widgets` without requiring pydantic schemas
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    url: str = Field(
-        ...,
-        description="The URL of the processed page",
-        min_length=1,
-    )
-
-    status: int = Field(
-        ...,
-        description="The HTTP status code returned by the page",
-        ge=0,
-        le=999,
-    )
-
-    markdown: str = Field(
-        default="",
-        description="The markdown representation of the page content",
-    )
-
-    widgets: list[Widget] = Field(
-        default_factory=list[Widget],
-        description="List of widgets associated with the page",
-    )
-
-    error: str | None = Field(
-        default=None,
-        description="Optional error message if processing failed",
-    )
-
-    @field_validator("url")
-    @classmethod
-    def validate_url_not_empty(cls, v: str) -> str:
-        """Ensure URL is not empty or whitespace only.
-
-        Args:
-            v: The URL string to validate.
-
-        Returns:
-            The validated URL string.
-
-        Raises:
-            ValueError: If URL is empty or whitespace only.
-
-        """
-        if not v or not v.strip():
-            msg = "URL cannot be empty"
-            raise ValueError(msg)
-        return v.strip()
+    from juicebox.models import PageResult
 
 
-def fetch_markdown(url: str, settings: BrowserSettings | None = None) -> PageResult:
-    """Fetch a URL and convert its HTML to Markdown.
-
-    First checks if there's a custom interaction handler for the domain.
-    If not, fetches HTML and converts to Markdown.
+async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
+    """These are the sites we have support for.
 
     Args:
-        url: The URL to fetch.
-        settings: Browser settings to use. Creates default if not provided.
+        app (JuiceboxApp): The JuiceBox Textual Application
+        url (str): The URL we want to browse to.
 
     Returns:
-        A PageResult containing the URL, status code, markdown content, and any error.
-
+        Represents the result of processing a web page.
     """
-    if settings is None:
-        settings = BrowserSettings()
+    tld: tldextract.ExtractResult = tldextract.extract(url=url)
+    domain: str = tld.domain
+    subdomain: str = tld.subdomain
+    suffix: str = tld.suffix
 
-    # Basic scheme defaulting: if user typed a bare domain, assume https
-    normalized: str = url.strip()
-    if not normalized:
-        return PageResult(url=url, status=0, markdown="", error="Empty URL")
+    app.log(f"Trying to go to {subdomain}.{domain}.{suffix} {tld.is_private=}")
 
-    if "://" not in normalized:
-        normalized = f"{settings.default_scheme}://{normalized}"
-
-    # Check for custom interaction handlers
-    parsed_url = urlparse(normalized)
-    domain = parsed_url.netloc.lower()
-
-    # Try to find a handler for this domain
-    # First try exact match
-    handler: Callable[[str, BrowserSettings], PageResult] | None = get_interaction(
-        domain,
-    )
-    if handler is not None:
-        return handler(normalized, settings)
-
-    # If not found, try removing common prefixes (www, old, new, m, mobile, compact)
-    domain_parts: list[str] = domain.split(".")
-    if len(domain_parts) > 2:  # noqa: PLR2004
-        # Try removing the first subdomain
-        domain_without_prefix = ".".join(domain_parts[1:])
-        handler = get_interaction(domain_without_prefix)
-        if handler is not None:
-            return handler(normalized, settings)
-
-    try:
-        # Use curl_cffi for HTTP(S), with a reasonable UA
-        resp: requests.Response = requests.get(
-            normalized,
-            timeout=settings.request_timeout,
-            impersonate=settings.user_agent,
-        )
-        content_type: str = resp.headers.get("content-type", "").lower()
-        text: str = resp.text or ""
-        if "html" in content_type:
-            md: str = html_to_md(text, heading_style="ATX")
-        else:
-            # Fallback: just present the raw text
-            md = "```\n" + text + "\n```"
-        return PageResult(url=resp.url, status=resp.status_code, markdown=md)
-
-    except Exception as e:  # noqa: BLE001
-        return PageResult(url=normalized, status=0, markdown="", error=str(e))
+    if f"{domain}.{suffix}" == "reddit.com":
+        page_result: PageResult = await handle_reddit(url=url)
+    else:
+        page_result: PageResult = await handle_unknown(url=url)
+    return page_result
 
 
 class JuiceboxApp(App[None]):
-    """Juicebox TUI web browser (minimal).
+    """Juicebox TUI web browser.
 
     Allows typing a domain/URL, fetches the page, converts to Markdown,
     and displays it in a scrollable pane.
@@ -181,6 +68,7 @@ class JuiceboxApp(App[None]):
     tab_content: dict[str, PageResult | None]  # Maps tab ID to PageResult
 
     BINDINGS = get_hotkeys()
+    CSS_PATH = "Juicebox.tcss"
 
     def _get_active_tab_id(self) -> str | None:
         """Get the ID of the currently active tab.
@@ -192,80 +80,51 @@ class JuiceboxApp(App[None]):
         active_tab: Tab | None = tabs.active_tab
         return active_tab.id if active_tab else None
 
-    def _update_markdown_from_tab(self) -> None:
+    async def _update_markdown_from_tab(self) -> None:
         """Update the content display to show the current tab's content."""
         tab_id: str | None = self._get_active_tab_id()
         if not tab_id:
             return
 
-        page_result: PageResult | None = self.tab_content.get(tab_id)
-        if page_result:
-            self.current_page = page_result
-            if page_result.error:
-                content: str = f"# Error fetching page\n\n{page_result.error}\n"
-                self.markdown.update(content)
+        pr: PageResult | None = self.tab_content.get(tab_id)
+        if pr:
+            self.current_page = pr
+            if pr.error:
+                content: str = f"# Error {pr.status} for {pr.url}\n\n{pr.error}\n"
+                await self.markdown.update(content)
+
                 # Clear any widget content
+                # TODO(TheLovinator): Check why we have this  # noqa: TD003
                 widgets_container: VerticalScroll = self.query_one(
-                    "#content_widgets",
-                    VerticalScroll,
+                    selector="#content_widgets",
+                    expect_type=VerticalScroll,
                 )
-                widgets_container.remove_children()
+
+                await widgets_container.remove_children()
             # If widgets are present, render them; otherwise fallback to markdown
-            elif page_result.widgets:
+            elif pr.widgets:
+                # TODO(TheLovinator): Check why we have this  # noqa: TD003
                 widgets_container = self.query_one(
                     "#content_widgets",
                     VerticalScroll,
                 )
                 widgets_container.remove_children()
-                for w in page_result.widgets:
+
+                for w in pr.widgets:
                     widgets_container.mount(w)
+
                 self.markdown.update("")
+
             else:
-                self.markdown.update(page_result.markdown)
-            self.title = f"Juicebox - {page_result.url}"
-            self.sub_title = f"Status: {page_result.status}"
+                self.markdown.update(pr.markdown)
+
+            self.title = f"Juicebox - {pr.url}"
+            self.sub_title = f"Status: {pr.status}"
         else:
             self.current_page = None
             self.markdown.update("")
             self.title = "Juicebox"
             self.sub_title = "about:juicebox"
-
-    def action_refresh(self) -> None:
-        """Refresh the current page."""
-        if self.current_page:
-            self.sub_title = f"Refreshing {self.current_page.url}..."
-            self.refresh(layout=True)
-            page_result: PageResult = fetch_markdown(
-                self.current_page.url,
-                self.settings,
-            )
-
-            # Update the tab content
-            tab_id: str | None = self._get_active_tab_id()
-            if tab_id:
-                self.tab_content[tab_id] = page_result
-
-            self.current_page = page_result
-            if page_result.widgets:
-                widgets_container: VerticalScroll = self.query_one(
-                    "#content_widgets",
-                    VerticalScroll,
-                )
-                widgets_container.remove_children()
-                for w in page_result.widgets:
-                    widgets_container.mount(w)
-                self.markdown.update("")
-            else:
-                self.markdown.update(page_result.markdown)
-            self.sub_title = f"Status: {page_result.status}"
-
-            self.notify(f"Refreshed {self.current_page.url}")
-        else:
-            self.sub_title = "No page to refresh."
-
-    def action_search(self) -> None:
-        """Search within the current page."""
-        do_action_search(self)
 
     def action_up(self) -> None:
         """Scroll up the content."""
@@ -304,7 +163,7 @@ class JuiceboxApp(App[None]):
         input_widget.value = ""
         input_widget.focus()
 
-    def action_new_tab(self) -> None:
+    async def action_new_tab(self) -> None:
         """Open a new tab."""
         tabs: Tabs = self.query_one(Tabs)
         self.current_tabs += 1
@@ -316,25 +175,24 @@ class JuiceboxApp(App[None]):
         if new_tab_id:
             self.tab_content[new_tab_id] = None
 
-            max_activation_attempts: int = 3
-
-            def activate_and_prompt(attempt: int = 0) -> None:
+            async def activate_and_prompt(attempt: int = 0) -> None:
                 try:
                     tabs.active = new_tab_id
                 except ValueError:
                     # Tab may not be mounted yet; retry a few times.
+                    max_activation_attempts: int = 3
                     if attempt < max_activation_attempts:
                         self.call_after_refresh(
                             lambda: activate_and_prompt(attempt + 1),
                         )
                     return
 
-                self._update_markdown_from_tab()
+                await self._update_markdown_from_tab()
                 self.action_open_url()
 
             self.call_after_refresh(activate_and_prompt)
 
-    def action_close_tab(self) -> None:
+    async def action_close_tab(self) -> None:
         """Close the current tab."""
         tabs: Tabs = self.query_one(Tabs)
         active_tab: Tab | None = tabs.active_tab
@@ -350,19 +208,19 @@ class JuiceboxApp(App[None]):
             self.notify(f"Closed {active_tab.label}", timeout=1)
 
             # Update display to show the newly active tab
-            self._update_markdown_from_tab()
+            await self._update_markdown_from_tab()
 
-    def action_next_tab(self) -> None:
+    async def action_next_tab(self) -> None:
         """Switch to the next tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_next_tab()
-        self._update_markdown_from_tab()
+        await self._update_markdown_from_tab()
 
-    def action_previous_tab(self) -> None:
+    async def action_previous_tab(self) -> None:
         """Switch to the previous tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_previous_tab()
-        self._update_markdown_from_tab()
+        await self._update_markdown_from_tab()
 
     def action_toggle_theme(self) -> None:
         """Toggle between all the available themes."""
@@ -415,15 +273,11 @@ class JuiceboxApp(App[None]):
             timeout=2,
         )
 
-        # Refresh to apply new image method
-        if self.current_page:
-            self.action_refresh()
-
-    def on_tabs_tab_activated(self) -> None:
+    async def on_tabs_tab_activated(self) -> None:
         """Handle tab activation (switching tabs)."""
-        self._update_markdown_from_tab()
+        await self._update_markdown_from_tab()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle URL input submission.
 
         Args:
@@ -434,7 +288,7 @@ class JuiceboxApp(App[None]):
         self.sub_title = f"Fetching {url}..."
         self.refresh(layout=True)
 
-        page_result: PageResult = fetch_markdown(url, self.settings)
+        page_result: PageResult = await fetch_site_contents(app=app, url=url)
 
         # Store the result for the current tab
         tab_id: str | None = self._get_active_tab_id()
@@ -497,9 +351,6 @@ class JuiceboxApp(App[None]):
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
-        # Load custom interaction handlers
-        load_interactions()
-
         # Load settings
         self.settings = BrowserSettings()
 

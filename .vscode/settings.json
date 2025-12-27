@@ -23,9 +23,11 @@
         "pydocstyle",
         "pytest",
         "pyupgrade",
+        "rnet",
         "selftext",
         "Sixel",
         "stickied",
+        "tcss",
         "WASD",
         "webscrapers"
     ]
