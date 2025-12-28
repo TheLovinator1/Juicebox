@@ -3,6 +3,44 @@
 }
 
 RedditComment {
-    height: 1fr;
-    border-bottom: orange dashed;
+    height: auto;
+    margin-bottom: 0;
+    margin-top: 1;
 }
+
+.replies > RedditComment:first-child {
+    margin-top: 0;
+}
+
+.comment-body {
+    border-left: solid green;
+    padding-left: 1;
+    height: auto;
+    background: $surface;
+}
+
+.comment-header {
+    text-style: bold;
+    color: $text-muted;
+    background: $surface-darken-1;
+    padding: 0 1;
+}
+
+.comment-content {
+    padding: 0 1 1 1;
+}
+
+
+.replies {
+    margin-left: 2;
+    padding-left: 0;
+    height: auto;
+}
+
+RedditComment .comment-body { border-left: solid red; }
+RedditComment RedditComment .comment-body { border-left: solid orange; }
+RedditComment RedditComment RedditComment .comment-body { border-left: solid yellow; }
+RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid green; }
+RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid blue; }
+RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid indigo; }
+RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid violet; }

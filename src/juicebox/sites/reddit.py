@@ -1,7 +1,10 @@
 from typing import TYPE_CHECKING
 
+from markdownify import markdownify
+from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Label
+from textual.widgets import Markdown
 from textual.widgets import Pretty
 from webscrapers.reddit import RedditCommentData
 from webscrapers.reddit import RedditPostData
@@ -20,12 +23,31 @@ class RedditComment(Widget):
         super().__init__()
 
     def compose(self) -> ComposeResult:
-        yield Label(f"{self.data.author} @ {self.data.date_posted}")
-        yield Label(f"{self.data.content_text}")
+        with Vertical(classes="comment-body"):
+            yield Label(
+                content=f"{self.data.author} @ {self.data.date_posted}",
+                classes="comment-header",
+            )
+            if self.data.content_html:
+                yield Markdown(
+                    markdown=markdownify(html=self.data.content_html),
+                    classes="comment-content",
+                )
+            else:
+                self.log.warning(f"Got empty content_html for {self.data.comment_id}")
+                yield Label(
+                    content="Empty?",
+                    classes="comment-content",
+                )
+
+        if self.data.children:
+            with Vertical(classes="replies"):
+                for child in self.data.children:
+                    yield RedditComment(child)
 
 
 def _render_reddit_content(data: RedditPostData) -> PageResult:
-    # A list of widgets, each widget is a Reddit comment.
+    # A list of widgets, each widget is a top-level Reddit comment.
     widgets: list[Widget] = [RedditComment(comment) for comment in data.comments]
     return PageResult(
         url=data.permalink or "",

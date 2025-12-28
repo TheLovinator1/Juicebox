@@ -1342,7 +1342,7 @@ wheels = [
 [[package]]
 name = "webscrapers"
 version = "0.1.0"
-source = { git = "https://github.com/TheLovinator1/webscrapers#6ef677f6f37d6d1f9efc5e4c3341257c524bb597" }
+source = { git = "https://github.com/TheLovinator1/webscrapers#29514be82f197f70982df92268d2f040ba2b149c" }
 dependencies = [
     { name = "asyncio" },
     { name = "loguru" },
