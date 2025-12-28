@@ -5,11 +5,12 @@ from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Label
 from textual.widgets import Markdown
-from textual.widgets import Pretty
 from webscrapers.reddit import RedditCommentData
 from webscrapers.reddit import RedditPostData
+from webscrapers.reddit import RedditScraperError
 from webscrapers.reddit import scrape_post
 
+from juicebox.exceptions import BrowserError
 from juicebox.models import PageResult
 
 if TYPE_CHECKING:
@@ -52,7 +53,6 @@ def _render_reddit_content(data: RedditPostData) -> PageResult:
     return PageResult(
         url=data.permalink or "",
         widgets=widgets,
-        status=data.response.status,
     )
 
 
@@ -62,20 +62,24 @@ async def handle_reddit(url: str) -> PageResult:
     Args:
         url: The Reddit URL to fetch.
 
+    Raises:
+        BrowserError: If response was not ok.
+
     Returns:
         A PageResult containing the processed Reddit content.
 
     """
-    reddit_post_data: RedditPostData = await scrape_post(post_url=url)
+    try:
+        reddit_post_data: RedditPostData = await scrape_post(post_url=url)
+    except RedditScraperError as e:
+        msg: str = f"Failed to access {url=}\n{e}"
+        raise BrowserError(msg) from e
+
     response: Response = reddit_post_data.response
 
     if not response.ok:
-        return PageResult(
-            url=reddit_post_data.permalink or "",
-            status=response.status,
-            widgets=[Label(f"Error {response.status}"), Pretty(response.json)],
-            error=f"Failed to access {url=}",
-        )
+        msg: str = f"Failed to access {url=}\n{response}"
+        raise BrowserError(msg)
 
     return _render_reddit_content(data=reddit_post_data)
 

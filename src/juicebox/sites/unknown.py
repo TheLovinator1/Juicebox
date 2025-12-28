@@ -1,31 +1,13 @@
 from typing import TYPE_CHECKING
 
-from textual.widgets import Label
-from textual.widgets import Pretty
+from textual.widgets import Markdown
 
+from juicebox.exceptions import BrowserError
 from juicebox.http import request_get
 from juicebox.models import PageResult
 
 if TYPE_CHECKING:
     from curl_cffi import requests
-
-
-def _render_content(response: requests.Response) -> PageResult:
-    """Convert HTML to Markdown and return.
-
-    Args:
-        response (requests.Response): Contains information from the URL we accessed.
-
-    Returns:
-        PageResult: Represents the result of processing a web page.
-    """
-    # TODO(TheLovinator): We should make our own version of Reader-mode before converting to markdown.  # noqa: E501, TD003
-
-    return PageResult(
-        markdown=response.markdown(),
-        url=response.url,
-        status=response.status_code,
-    )
 
 
 async def handle_unknown(url: str) -> PageResult:
@@ -34,6 +16,9 @@ async def handle_unknown(url: str) -> PageResult:
     Args:
         url: The URL to fetch.
 
+    Raises:
+        BrowserError: If response was not ok.
+
     Returns:
         A PageResult containing the website content.
 
@@ -41,14 +26,11 @@ async def handle_unknown(url: str) -> PageResult:
     response: requests.Response = await request_get(url=url)
 
     if not response.ok:
-        return PageResult(
-            url=url,
-            status=response.status_code,
-            widgets=[
-                Label(f"Error {response.status_code} - {response.reason}"),
-                Pretty(response.json),  # pyright: ignore[reportUnknownMemberType]
-            ],
-            error=f"Failed to access {url=}",
-        )
+        msg: str = f"Failed to access {url=}\n{response}"
+        raise BrowserError(msg)
 
-    return _render_content(response=response)
+    # TODO(TheLovinator): We should make our own version of Reader-mode before converting to markdown.  # noqa: E501, TD003
+    return PageResult(
+        widgets=[Markdown(markdown=response.markdown())],
+        url=response.url,
+    )

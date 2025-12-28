@@ -8,19 +8,22 @@ from typing import cast
 import tldextract
 from textual.app import App
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import ScrollableContainer
 from textual.theme import Theme
+from textual.widgets import Button
 from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import Input
-from textual.widgets import Markdown
-from textual.widgets import Tab
+from textual.widgets import Static
+from textual.widgets import TabbedContent
+from textual.widgets import TabPane
 from textual.widgets import Tabs
 
-from juicebox.history import URLSuggester
-from juicebox.history import save_url_to_history
+from juicebox.exceptions import BrowserError
 from juicebox.hotkeys import get_hotkeys
+from juicebox.models import PageResult
 from juicebox.settings import BrowserSettings
+from juicebox.sites.reddit import Vertical
 from juicebox.sites.reddit import handle_reddit
 from juicebox.sites.unknown import handle_unknown
 
@@ -54,173 +57,154 @@ async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
     return page_result
 
 
-class JuiceboxApp(App[None]):
-    """Juicebox TUI web browser.
+class Browser(ScrollableContainer):
+    """This represents one browser tab."""
 
-    Allows typing a domain/URL, fetches the page, converts to Markdown,
-    and displays it in a scrollable pane.
-    """
+    def __init__(self, page_result: PageResult) -> None:  # noqa: D107
+        super().__init__()
+        self._page_result: PageResult = page_result
 
-    current_page: PageResult | None = None
-    markdown: Markdown
-    current_tabs: int = 1
+    def compose(self) -> ComposeResult:
+        """Called by Textual to create child widgets.
+
+        This method is called when a widget is mounted or by
+        setting recompose=True when calling refresh()
+
+        Yields:
+            Iterator[ComposeResult]: The Widgets this browser tab will have.
+        """
+        if not self._page_result.widgets:
+            yield Input(placeholder="Enter URL")
+            yield Static("No page loaded")
+        else:
+            yield from self._page_result.widgets
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Gets triggered when Input() is submitted."""
+        self.query_one(Static).update(f"Loaded: {event.value}")
+
+
+class BrowserTab(TabPane):
+    """A single tab in the browser."""
+
+    def __init__(
+        self,
+        title: str,
+        page_result: PageResult,
+        tab_id: str | None = None,
+    ) -> None:
+        """Init the browser tab.
+
+        Args:
+            tab_id(str | None): Optional ID for the BrowserTab.
+            title (str): Title of the TabPane (will be displayed in a tab label).
+            page_result (PageResult): Represents the result of processing a web page.
+        """
+        super().__init__(title, id=tab_id)
+        self.history: list[str] = []
+        self._page_result: PageResult = page_result
+
+    def compose(self) -> ComposeResult:
+        """Called by Textual to create child widgets.
+
+        Yields:
+            One browser tab.
+        """
+        yield Browser(self._page_result)
+
+
+class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
+    """Juicebox TUI web browser."""
+
     settings: BrowserSettings
-    tab_content: dict[str, PageResult | None]  # Maps tab ID to PageResult
 
     BINDINGS = get_hotkeys()
     CSS_PATH = "Juicebox.tcss"
 
-    def _get_active_tab_id(self) -> str | None:
-        """Get the ID of the currently active tab.
+    def compose(self) -> ComposeResult:  # noqa: PLR6301
+        """Apply the UI layout.
 
-        Returns:
-            The active tab ID, or None if no tab is active.
+        Layout consists of a header, a markdown content area, and a footer.
+
+        Yields:
+            ComposeResult: The UI components.
+
         """
-        tabs: Tabs = self.query_one(Tabs)
-        active_tab: Tab | None = tabs.active_tab
-        return active_tab.id if active_tab else None
+        yield Header(show_clock=True, id="header", icon="🧃")
 
-    async def _update_markdown_from_tab(self) -> None:
-        """Update the content display to show the current tab's content."""
-        tab_id: str | None = self._get_active_tab_id()
-        if not tab_id:
+        yield Vertical(
+            Input(placeholder="Enter a URL and press Enter", id="url_input"),
+            Button("Open in New Tab", id="new_tab_button"),
+            id="input_container",
+        )
+
+        with TabbedContent(id="tabs"):
+            yield TabPane(title="about:juicebox", id="about_juicebox")
+
+        yield Footer(compact=True, id="footer")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Gets triggered when clicking buttons.
+
+        Args:
+            event (Button.Pressed): Event sent when a Button is pressed.
+        """
+        if event.button.id == "new_tab_button":
+            await self.open_new_tab()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle the input submission to trigger the button press."""
+        if event.input.id == "url_input":
+            await self.open_new_tab()
+
+    async def open_new_tab(self) -> None:
+        """Main logic to fetch content and create a tab."""
+        url_input: Input = self.query_one("#url_input", Input)
+        url: str = url_input.value
+
+        if not url:
             return
 
-        pr: PageResult | None = self.tab_content.get(tab_id)
-        if pr:
-            self.current_page = pr
-            if pr.error:
-                content: str = f"# Error {pr.status} for {pr.url}\n\n{pr.error}\n"
-                await self.markdown.update(content)
-
-                # Clear any widget content
-                # TODO(TheLovinator): Check why we have this  # noqa: TD003
-                widgets_container: VerticalScroll = self.query_one(
-                    selector="#content_widgets",
-                    expect_type=VerticalScroll,
-                )
-
-                await widgets_container.remove_children()
-            # If widgets are present, render them; otherwise fallback to markdown
-            elif pr.widgets:
-                # TODO(TheLovinator): Check why we have this  # noqa: TD003
-                widgets_container = self.query_one(
-                    "#content_widgets",
-                    VerticalScroll,
-                )
-                widgets_container.remove_children()
-
-                for w in pr.widgets:
-                    widgets_container.mount(w)
-
-                self.markdown.update("")
-
-            else:
-                self.markdown.update(pr.markdown)
-
-            self.title = f"Juicebox - {pr.url}"
-            self.sub_title = f"Status: {pr.status}"
-        else:
-            self.current_page = None
-            self.markdown.update("")
-            self.title = "Juicebox"
-            self.sub_title = "about:juicebox"
-
-    def action_up(self) -> None:
-        """Scroll up the content."""
-        self.markdown.scroll_up()
-
-    def action_down(self) -> None:
-        """Scroll down the content."""
-        self.markdown.scroll_down()
-
-    def action_left(self) -> None:
-        """Scroll left the content."""
-        self.markdown.scroll_left()
-
-    def action_right(self) -> None:
-        """Scroll right the content."""
-        self.markdown.scroll_right()
-
-    def action_open_url(self) -> None:
-        """Prompt for a new URL to fetch."""
-        self.sub_title = "Enter URL..."
-
-        # Get or create the input widget
         try:
-            input_widget: Input = self.query_one("#url_input", Input)
-        except Exception:  # noqa: BLE001
-            # Input doesn't exist yet, add it
-            self.query_one(Tabs).disabled = True
-            input_widget = Input(
-                placeholder="Enter URL and press Enter",
-                id="url_input",
-                suggester=URLSuggester(),
-            )
-            self.query_one(Markdown).mount(input_widget, before=self.query_one(Footer))
+            # 1. Fetch content
+            page_result: PageResult = await fetch_site_contents(app=self, url=url)
 
-        # Clear the input value and any suggestion when opening URL input
-        input_widget.value = ""
-        input_widget.focus()
+            # 2. Calculate a unique ID for the new tab
+            tabbed_content = self.query_one(TabbedContent)
+            new_tab_id = f"tab-{tabbed_content.tab_count + 1}-{abs(hash(url))}"
 
-    async def action_new_tab(self) -> None:
-        """Open a new tab."""
-        tabs: Tabs = self.query_one(Tabs)
-        self.current_tabs += 1
-        new_tab: Tab = Tab(f"Tab {self.current_tabs}")
-        tabs.add_tab(new_tab)
+            # 3. Create the TabPane (BrowserTab) containing the Browser widget
+            new_tab = BrowserTab(title=url, page_result=page_result, tab_id=new_tab_id)
 
-        # Initialize empty content for the new tab and immediately focus it
-        new_tab_id: str | None = new_tab.id
-        if new_tab_id:
-            self.tab_content[new_tab_id] = None
+            # 4. Add the pane to the DOM
+            await tabbed_content.add_pane(new_tab)
 
-            async def activate_and_prompt(attempt: int = 0) -> None:
-                try:
-                    tabs.active = new_tab_id
-                except ValueError:
-                    # Tab may not be mounted yet; retry a few times.
-                    max_activation_attempts: int = 3
-                    if attempt < max_activation_attempts:
-                        self.call_after_refresh(
-                            lambda: activate_and_prompt(attempt + 1),
-                        )
-                    return
+            # 5. Activate the new tab
+            tabbed_content.active = new_tab_id
 
-                await self._update_markdown_from_tab()
-                self.action_open_url()
+            # 6. Clear input
+            url_input.value = ""
 
-            self.call_after_refresh(activate_and_prompt)
+        except BrowserError as e:
+            self.bell()
+            url_input.value = f"Error: {e}"
 
-    async def action_close_tab(self) -> None:
-        """Close the current tab."""
-        tabs: Tabs = self.query_one(Tabs)
-        active_tab: Tab | None = tabs.active_tab
-        if active_tab is not None and active_tab.id:
-            tab_id: str = active_tab.id
-            # Remove tab content from storage
-            if tab_id in self.tab_content:
-                del self.tab_content[tab_id]
+    async def close_active_tab(self) -> None:
+        """Close the tab that is active."""
+        # TODO(TheLovinator): Remove pane with ID instead of the active one.  # noqa: E501, TD003
 
-            tabs.remove_tab(tab_id)
-            if self.current_tabs > 1:
-                self.current_tabs -= 1
-            self.notify(f"Closed {active_tab.label}", timeout=1)
-
-            # Update display to show the newly active tab
-            await self._update_markdown_from_tab()
+        tabs: TabbedContent = self.query_one(TabbedContent)
+        await tabs.remove_pane(tabs.active)
 
     async def action_next_tab(self) -> None:
         """Switch to the next tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_next_tab()
-        await self._update_markdown_from_tab()
 
     async def action_previous_tab(self) -> None:
         """Switch to the previous tab."""
         tabs: Tabs = self.query_one(Tabs)
         tabs.action_previous_tab()
-        await self._update_markdown_from_tab()
 
     def action_toggle_theme(self) -> None:
         """Toggle between all the available themes."""
@@ -273,102 +257,15 @@ class JuiceboxApp(App[None]):
             timeout=2,
         )
 
-    async def on_tabs_tab_activated(self) -> None:
-        """Handle tab activation (switching tabs)."""
-        await self._update_markdown_from_tab()
-
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle URL input submission.
-
-        Args:
-            event: The input submitted event.
-
-        """
-        url: str = event.value.strip()
-        self.sub_title = f"Fetching {url}..."
-        self.refresh(layout=True)
-
-        page_result: PageResult = await fetch_site_contents(app=app, url=url)
-
-        # Store the result for the current tab
-        tab_id: str | None = self._get_active_tab_id()
-        if tab_id:
-            self.tab_content[tab_id] = page_result
-
-        self.current_page = page_result
-
-        if page_result.error:
-            content: str = f"# Error fetching page\n\n{page_result.error}\n"
-            self.markdown.update(content)
-            # Clear any widget content on error
-            self.query_one("#content_widgets", VerticalScroll).remove_children()
-        else:
-            # Save to history only if successful
-            save_url_to_history(page_result.url, self.settings)
-            if page_result.widgets:
-                widgets_container: VerticalScroll = self.query_one(
-                    "#content_widgets",
-                    VerticalScroll,
-                )
-                widgets_container.remove_children()
-                for w in page_result.widgets:
-                    widgets_container.mount(w)
-                self.markdown.update("")
-            else:
-                self.markdown.update(page_result.markdown)
-        self.title = f"Juicebox - {page_result.url}"
-        self.sub_title = f"Status: {page_result.status}"
-
-        # Hide the input widget and restore focus to tabs
-        try:
-            input_widget: Input = self.query_one("#url_input", Input)
-            input_widget.remove()
-            self.query_one(Tabs).disabled = False
-            self.query_one(Tabs).focus()
-        except Exception:  # noqa: BLE001, S110
-            pass
-
-    def compose(self) -> ComposeResult:
-        """Apply the UI layout.
-
-        Layout consists of a header, a markdown content area, and a footer.
-
-        Yields:
-            ComposeResult: The UI components.
-
-        """
-        # Header
-        yield Header(show_clock=True, id="header", icon="🧃")
-        yield Tabs(Tab(f"Tab {self.current_tabs}"), id="tabs")
-
-        # The main browser area: markdown plus a scroll container for widgets
-        self.markdown = Markdown("", id="content")
-        yield self.markdown
-        yield VerticalScroll(id="content_widgets")
-
-        # Footer
-        yield Footer()
-
     def on_mount(self) -> None:
         """Called when the app is mounted."""
+        self.title = "Juicebox"
+
         # Load settings
         self.settings = BrowserSettings()
 
         # Apply theme from settings
         self.theme = self.settings.theme
-
-        self.title = "Juicebox"
-        self.sub_title = "about:juicebox"
-
-        # Initialize tab content dictionary
-        self.tab_content = {}
-
-        # Initialize the first tab
-        tab_id: str | None = self._get_active_tab_id()
-        if tab_id:
-            self.tab_content[tab_id] = None
-
-        self.query_one(Tabs).focus()
 
 
 app = JuiceboxApp()

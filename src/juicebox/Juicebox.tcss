@@ -13,7 +13,7 @@ RedditComment {
 }
 
 .comment-body {
-    border-left: solid green;
+    border-left: solid $primary;
     padding-left: 1;
     height: auto;
     background: $surface;
@@ -37,10 +37,37 @@ RedditComment {
     height: auto;
 }
 
-RedditComment .comment-body { border-left: solid red; }
-RedditComment RedditComment .comment-body { border-left: solid orange; }
-RedditComment RedditComment RedditComment .comment-body { border-left: solid yellow; }
-RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid green; }
-RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid blue; }
-RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid indigo; }
-RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment RedditComment .comment-body { border-left: solid violet; }
+/* TODO(TheLovinator): We need to replace the colors below */
+.replies .comment-body {
+    border-left: solid $primary-muted;
+}
+
+
+.replies .replies .comment-body {
+    border-left: solid $secondary;
+}
+
+
+.replies .replies .replies .comment-body {
+    border-left: solid $secondary-muted;
+}
+
+
+#input_container {
+    layout: horizontal;
+    background: $surface;
+}
+
+#url_input {
+    width: 1fr;
+    border: none;
+    background: transparent;
+}
+
+#new_tab_button {
+    width: auto;
+    border: none;
+    padding: 0 1;
+    background: $primary;
+    color: $text;
+}
