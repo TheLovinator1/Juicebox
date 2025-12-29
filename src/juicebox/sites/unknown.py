@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from markdownify import markdownify
 from textual.widgets import Markdown
 
 from juicebox.exceptions import BrowserError
@@ -30,7 +31,9 @@ async def handle_unknown(url: str) -> PageResult:
         raise BrowserError(msg)
 
     # TODO(TheLovinator): We should make our own version of Reader-mode before converting to markdown.  # noqa: E501, TD003
+    md: str = markdownify(response.text)
+
     return PageResult(
-        widgets=[Markdown(markdown=response.markdown())],
+        widgets=[Markdown(markdown=md)],
         url=response.url,
     )
