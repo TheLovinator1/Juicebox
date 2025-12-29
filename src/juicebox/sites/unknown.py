@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from textual.widgets import Markdown
 
 from juicebox.exceptions import BrowserError
-from juicebox.http import request_get
+from juicebox.http import request_aget
 from juicebox.models import PageResult
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ async def handle_unknown(url: str) -> PageResult:
         A PageResult containing the website content.
 
     """
-    response: requests.Response = await request_get(url=url)
+    response: requests.Response = await request_aget(url=url)
 
     if not response.ok:
         msg: str = f"Failed to access {url=}\n{response}"

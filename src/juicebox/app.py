@@ -60,7 +60,7 @@ async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
 class Browser(ScrollableContainer):
     """This represents one browser tab."""
 
-    def __init__(self, page_result: PageResult) -> None:  # noqa: D107
+    def __init__(self, page_result: PageResult) -> None:
         super().__init__()
         self._page_result: PageResult = page_result
 

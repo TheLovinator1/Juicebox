@@ -23,6 +23,7 @@
         "pydocstyle",
         "pytest",
         "pyupgrade",
+        "renderable",
         "rnet",
         "selftext",
         "Sixel",
