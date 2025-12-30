@@ -1,18 +1,22 @@
 {
     "cSpell.words": [
+        "anyio",
         "appauthor",
         "appname",
+        "asyncio",
         "awardings",
         "cffi",
         "crosspostable",
         "crossposts",
         "docstrings",
+        "excinfo",
         "Halfcell",
         "Hellsén",
         "isort",
         "Joakim",
         "Juicebox",
         "Lovinator",
+        "lxml",
         "markdownify",
         "modhash",
         "platformdirs",
@@ -29,6 +33,7 @@
         "Sixel",
         "stickied",
         "tcss",
+        "tldextract",
         "WASD",
         "webscrapers"
     ]
