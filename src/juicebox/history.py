@@ -1,116 +1,192 @@
+import datetime
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from textual.suggester import Suggester
-
-from juicebox.settings import DATA_DIR
-from juicebox.settings import BrowserSettings
+from pydantic import BaseModel
+from sqlmodel import Field
+from sqlmodel import Session
+from sqlmodel import SQLModel
+from sqlmodel import select
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Sequence
+
+    from sqlalchemy import Engine
+    from sqlmodel.sql.expression import SelectOfScalar
+
+    from juicebox.settings import BrowserSettings
 
 
-def get_history_file() -> Path:
-    """Get the path to the history file.
+class HistoryEntry(SQLModel, table=True):
+    """A history entry representing a visited URL."""
 
-    Returns:
-        Path: The path to the history file.
+    id: int | None = Field(default=None, primary_key=True, description="Primary key.")
+
+    created_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.UTC),
+        description="Timestamp of when the entry was created. Stored in UTC.",
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.UTC),
+        description="Timestamp of when the entry was last updated. Stored in UTC.",
+    )
+
+    date_visited_json: str = Field(
+        default="[]",
+        description="JSON-encoded list of timestamps when the URL was visited.",
+    )
+
+    @property
+    def date_visited(self) -> list[datetime.datetime]:
+        """Get the list of visit timestamps as datetime objects."""
+        return [datetime.datetime.fromisoformat(dt) for dt in json.loads(self.date_visited_json)]
+
+    @date_visited.setter
+    def date_visited(self, value: list[datetime.datetime]) -> None:
+        """Set the list of visit timestamps from datetime objects."""
+        self.date_visited_json = json.dumps([dt.isoformat() for dt in value])
+
+    # Screenshot data
+    screenshot: bytes | None = Field(default=None, description="Screenshot of the webpage at the time of visit.")
+    screenshot_date: datetime.datetime | None = Field(default=None, description="When captured.")
+
+    # Page metadata
+    url: str = Field(index=True, unique=True, description="The URL visited.")
+    title: str = Field(description="The title of the page.")
+    summary: str = Field(description="A short summary or description of the page.")
+
+    # Favicon data
+    favicon: bytes | None = Field(default=None, description="Favicon of the webpage at the time of visit")
+    favicon_date: datetime.datetime | None = Field(default=None, description="Timestamp of when the favicon was saved.")
+
+    def normalized_url(self) -> str:
+        """Return a normalized version of the URL for comparison.
+
+        This removes the scheme (http, https) and www prefix.
+
+        Returns:
+            The normalized URL.
+
+        """
+        url: str = self.url.lower()
+        if url.startswith("http://"):
+            url = url[len("http://") :]
+        elif url.startswith("https://"):
+            url = url[len("https://") :]
+        return url.removeprefix("www.")
+
+
+class URLData(BaseModel):
+    """Data for a URL to be saved to history."""
+
+    url: str
+    title: str = ""
+    summary: str = ""
+
+
+def remove_expired_history(session: Session, settings: BrowserSettings) -> None:
+    """Clean up old history entries based on settings.
+
+    Args:
+        session: Database session to use.
+        settings: Browser settings to use.
+
     """
-    # TODO(TheLovinator): Migrate to a database or more structured format later  # noqa: E501, TD003
-    return DATA_DIR / "history.json"
+    cutoff_date: datetime.datetime = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        days=settings.history_days,
+    )
+
+    statement: SelectOfScalar[HistoryEntry] = select(HistoryEntry).where(HistoryEntry.updated_at < cutoff_date)
+    old_entries: Sequence[HistoryEntry] = session.exec(statement).all()
+
+    for entry in old_entries:
+        session.delete(entry)
+
+    session.commit()
 
 
-def load_history() -> list[str]:
-    """Load URL history from the history file.
+def save_or_update_history_entry(url_data: URLData, now: datetime.datetime, session: Session) -> None:
+    """Insert or update a history entry for the given URL data.
 
-    Returns:
-        list[str]: A list of URLs from history, newest first.
-            Returns empty list if file doesn't exist.
+    Args:
+        url_data: URL data to insert or update.
+        now: Current timestamp.
+        session: Database session to use.
     """
-    history_file: Path = get_history_file()
-    if not history_file.exists():
-        return []
+    statement: SelectOfScalar[HistoryEntry] = select(HistoryEntry).where(HistoryEntry.url == url_data.url)
+    existing_entry: HistoryEntry | None = session.exec(statement).first()
 
-    try:
-        with history_file.open("r", encoding="utf-8") as f:
-            data: list[str] = json.load(f)
-            return data
-    except json.JSONDecodeError, OSError:
-        return []
+    if existing_entry:
+        visits: list[datetime.datetime] = existing_entry.date_visited
+        visits.append(now)
+        existing_entry.date_visited = visits
+        existing_entry.updated_at = now
+        session.add(existing_entry)
+
+    else:
+        new_entry = HistoryEntry(
+            url=url_data.url,
+            title=url_data.title,
+            summary=url_data.summary,
+            created_at=now,
+            updated_at=now,
+        )
+        new_entry.date_visited = [now]
+        session.add(new_entry)
+
+    session.commit()
 
 
-def save_url_to_history(url: str, settings: BrowserSettings | None = None) -> None:
+def save_url_to_history(url_data: URLData, engine: Engine, settings: BrowserSettings) -> None:
     """Save a URL to the history file.
 
     URLs are stored with newest first. Duplicates are removed (moved to top).
     Maximum URLs kept is determined by settings.history_limit.
 
     Args:
-        url: The URL to save to history.
-        settings: Browser settings to use. Creates default if not provided.
+        url_data: URL data to save.
+        engine: Database engine to use.
+        settings: Browser settings to use.
 
     """
-    if settings is None:
-        settings = BrowserSettings()
+    now: datetime.datetime = datetime.datetime.now(datetime.UTC)
 
-    history: list[str] = load_history()
-
-    # Remove the URL if it already exists (we'll add it to the front)
-    if url in history:
-        history.remove(url)
-
-    # Add URL to the front
-    history.insert(0, url)
-
-    # Keep only the most recent URLs based on settings
-    history = history[: settings.history_limit]
-
-    # Save to file
-    history_file: Path = get_history_file()
-    try:
-        with history_file.open("w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
-    except OSError:
-        # TODO(TheLovinator): Don't actually fail silently  # noqa: TD003
-        pass  # Fail silently if we can't write history
+    with Session(engine) as session:
+        save_or_update_history_entry(url_data=url_data, now=now, session=session)
+        remove_expired_history(session=session, settings=settings)
 
 
-class URLSuggester(Suggester):
-    """Suggester that provides URL completions from browsing history."""
+def get_matching_history(query: str, engine: Engine, limit: int = 10) -> list[HistoryEntry]:
+    """Get history entries matching the given query.
 
-    def __init__(self) -> None:
-        """Initialize the URLSuggester with cached history."""
-        super().__init__(use_cache=False, case_sensitive=False)
-        self._history: list[str] = []
+    Matches against URL and title, ordered by most recent first.
 
-    async def get_suggestion(self, value: str) -> str | None:
-        """Get a URL suggestion based on the current input value.
+    Args:
+        query: The search query string.
+        engine: Database engine to use.
+        limit: Maximum number of results to return.
 
-        Args:
-            value: The current input value.
+    Returns:
+        List of matching history entries, ordered by most recent.
+    """
+    with Session(engine) as session:
+        # Get all entries
+        statement: SelectOfScalar[HistoryEntry] = select(HistoryEntry)
+        all_entries: Sequence[HistoryEntry] = session.exec(statement).all()
 
-        Returns:
-            str | None: A suggested URL completion, or None if no match found.
-        """
-        # Don't suggest anything if value is empty or just whitespace
-        if not value or not value.strip():
-            return None
+        # Filter in Python to match query in URL or title (case-insensitive)
+        if not query:
+            matching: list[HistoryEntry] = list(all_entries)
+        else:
+            query_lower: str = query.lower()
+            matching: list[HistoryEntry] = []
+            for entry in all_entries:
+                entry_url: str = entry.url.lower()
+                entry_title: str = entry.title.lower()
 
-        # Refresh history on each call to get latest URLs
-        self._history = load_history()
+                if query_lower in entry_url or query_lower in entry_title:
+                    matching.append(entry)
 
-        # Find first matching URL (case-insensitive)
-        value_lower: str = value.lower()
-        for url in self._history:
-            # Strip common prefixes for matching
-            url_normalized: str = url.lower()
-            url_normalized = url_normalized.removeprefix("https://").removeprefix(
-                "http://",
-            )
-            url_normalized = url_normalized.removeprefix("www.")
-
-            if url_normalized.startswith(value_lower):
-                return url
-
-        return None
+        # Return the most recent entries (sorted by updated_at descending)
+        sorted_entries: list[HistoryEntry] = sorted(matching, key=lambda e: e.updated_at, reverse=True)
+        return sorted_entries[:limit]

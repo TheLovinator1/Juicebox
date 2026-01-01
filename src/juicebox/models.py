@@ -19,3 +19,9 @@ class PageResult:
 
     widgets: list[Widget]
     """List of widgets associated with the page."""
+
+    title: str
+    """The title of the page."""
+
+    summary: str
+    """A short summary or description of the page."""

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
-from typing import Literal
-from typing import cast
 
 import tldextract
+from sqlalchemy.engine.base import Engine
+from sqlmodel import SQLModel
+from sqlmodel import create_engine
 from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer
+from textual.containers import Vertical
 from textual.theme import Theme
 from textual.widgets import Button
 from textual.widgets import Footer
@@ -20,17 +22,17 @@ from textual.widgets import TabPane
 from textual.widgets import Tabs
 
 from juicebox.exceptions import BrowserError
+from juicebox.history import URLData
+from juicebox.history import save_url_to_history
 from juicebox.hotkeys import get_hotkeys
 from juicebox.models import PageResult
 from juicebox.settings import BrowserSettings
-from juicebox.sites.reddit import Vertical
 from juicebox.sites.reddit import handle_reddit
 from juicebox.sites.unknown import handle_unknown
 
 if TYPE_CHECKING:
+    from sqlalchemy import Engine
     from textual.theme import Theme
-
-    from juicebox.models import PageResult
 
 
 async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
@@ -51,10 +53,30 @@ async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
     app.log(f"Trying to go to {subdomain}.{domain}.{suffix} {tld.is_private=}")
 
     if f"{domain}.{suffix}" == "reddit.com":
-        page_result: PageResult = await handle_reddit(url=url)
+        page_result: PageResult = await handle_reddit(url=url, app=app)
     else:
-        page_result: PageResult = await handle_unknown(url=url)
+        page_result: PageResult = await handle_unknown(url=url, app=app)
     return page_result
+
+
+def create_error_page(url: str, error: str) -> PageResult:
+    """Create an error page for display.
+
+    Args:
+        url (str): The URL that failed to load.
+        error (str): The error message to display.
+
+    Returns:
+        PageResult: A page result with error information.
+    """
+    error_text: str = f"[red]Error[/red]\n\n[yellow]{url}[/yellow]\n\n{error}"
+    error_widget = Static(error_text)
+    return PageResult(
+        url=url,
+        title="Error",
+        summary="Failed to load page",
+        widgets=[error_widget],
+    )
 
 
 class Browser(ScrollableContainer):
@@ -87,12 +109,7 @@ class Browser(ScrollableContainer):
 class BrowserTab(TabPane):
     """A single tab in the browser."""
 
-    def __init__(
-        self,
-        title: str,
-        page_result: PageResult,
-        tab_id: str | None = None,
-    ) -> None:
+    def __init__(self, title: str, page_result: PageResult, tab_id: str | None = None) -> None:
         """Init the browser tab.
 
         Args:
@@ -113,10 +130,11 @@ class BrowserTab(TabPane):
         yield Browser(self._page_result)
 
 
-class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
+class JuiceboxApp(App[None]):
     """Juicebox TUI web browser."""
 
     settings: BrowserSettings
+    history_engine: Engine
 
     BINDINGS = get_hotkeys()
     CSS_PATH = "Juicebox.tcss"
@@ -133,7 +151,7 @@ class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
         yield Header(show_clock=True, id="header", icon="🧃")
 
         yield Vertical(
-            Input(placeholder="Enter a URL and press Enter", id="url_input"),
+            Input(placeholder="Enter a URL", id="url_input"),
             Button("Open in New Tab", id="new_tab_button"),
             id="input_container",
         )
@@ -165,33 +183,36 @@ class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
         if not url:
             return
 
+        page_result: PageResult
+        tab_title: str
+
         try:
-            # 1. Fetch content
-            page_result: PageResult = await fetch_site_contents(app=self, url=url)
+            page_result = await fetch_site_contents(app=self, url=url)
+            tab_title = url
 
-            # 2. Calculate a unique ID for the new tab
-            tabbed_content = self.query_one(TabbedContent)
-            new_tab_id = f"tab-{tabbed_content.tab_count + 1}-{abs(hash(url))}"
+            url_data: URLData = URLData(url=page_result.url, title=page_result.title, summary=page_result.summary)
+            save_url_to_history(url_data=url_data, engine=self.history_engine, settings=self.settings)
 
-            # 3. Create the TabPane (BrowserTab) containing the Browser widget
-            new_tab = BrowserTab(title=url, page_result=page_result, tab_id=new_tab_id)
-
-            # 4. Add the pane to the DOM
-            await tabbed_content.add_pane(new_tab)
-
-            # 5. Activate the new tab
-            tabbed_content.active = new_tab_id
-
-            # 6. Clear input
+            # Clear the input field for the next URL
             url_input.value = ""
 
         except BrowserError as e:
             self.bell()
-            url_input.value = f"Error: {e}"
+            page_result = create_error_page(url=url, error=str(e))
+            tab_title = f"Error: {url}"
+
+        # Create the tab once with the appropriate page_result and title
+        tabbed_content: TabbedContent = self.query_one(TabbedContent)
+        new_tab_id: str = f"tab-{tabbed_content.tab_count + 1}-{abs(hash(url))}"
+
+        new_tab = BrowserTab(title=tab_title, page_result=page_result, tab_id=new_tab_id)
+
+        await tabbed_content.add_pane(new_tab)
+        tabbed_content.active = new_tab_id
 
     async def close_active_tab(self) -> None:
         """Close the tab that is active."""
-        # TODO(TheLovinator): Remove pane with ID instead of the active one.  # noqa: E501, TD003
+        # TODO(TheLovinator): Remove pane with ID instead of the active one.  # noqa: TD003
 
         tabs: TabbedContent = self.query_one(TabbedContent)
         await tabs.remove_pane(tabs.active)
@@ -220,18 +241,14 @@ class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
             next_index: int = (current_index + 1) % len(theme_names)
         except ValueError:
             next_index = 0  # Fallback to first theme if current not found
-            self.notify(
-                message="Current theme not found in available themes, switching to first theme.",  # noqa: E501
-                timeout=2,
-                severity="error",
-            )
+            msg = "Current theme not found in available themes, switching to first theme."
+            self.notify(message=msg, timeout=2, severity="error")
 
         next_theme_name: str = theme_names[next_index]
         self.theme = next_theme_name
-        self.notify(
-            f"Switched to theme: {next_theme_name} ({next_index + 1}/{len(theme_names)})",  # noqa: E501
-            timeout=1,
-        )
+
+        msg: str = f"Switched to theme: {next_theme_name} ({next_index + 1}/{len(theme_names)})"
+        self.notify(msg, timeout=1)
 
     def action_toggle_image_method(self) -> None:
         """Toggle between image rendering methods."""
@@ -241,21 +258,14 @@ class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
             current_index: int = methods.index(current)
             next_index: int = (current_index + 1) % len(methods)
         except ValueError:
-            next_index = 0  # Fallback to auto if current not found
+            next_index = 0
 
-        next_method = cast(
-            "Literal['auto', 'tgp', 'sixel', 'unicode', 'halfcell']",
-            methods[next_index],
-        )
+        next_method: str = methods[next_index]
         self.settings.image_method = next_method
 
         # Update environment variable so it's picked up on next fetch
         os.environ["JUICEBOX_IMAGE_METHOD"] = next_method
-
-        self.notify(
-            f"Image method: {next_method} ({next_index + 1}/{len(methods)})",
-            timeout=2,
-        )
+        self.notify(f"Image method: {next_method} ({next_index + 1}/{len(methods)})", timeout=2)
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
@@ -266,6 +276,10 @@ class JuiceboxApp(App):  # pyright: ignore[reportMissingTypeArgument]
 
         # Apply theme from settings
         self.theme = self.settings.theme
+
+        # Initialize history database engine
+        self.history_engine = create_engine(str(self.settings.history_file_path), echo=False)
+        SQLModel.metadata.create_all(self.history_engine)
 
 
 app = JuiceboxApp()

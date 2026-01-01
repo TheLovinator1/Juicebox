@@ -1,13 +1,14 @@
-from pathlib import Path
 from typing import TYPE_CHECKING
-from typing import Literal
 
 from curl_cffi import BrowserTypeLiteral  # noqa: TC002
 from platformdirs import user_config_path
 from platformdirs import user_data_path
+from pydantic import AnyUrl
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+from textual.theme import BUILTIN_THEMES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,6 +29,9 @@ CONFIG_DIR: Path = user_config_path(
     ensure_exists=True,
 )
 
+DEFAULT_HISTORY_DB_PATH: Path = DATA_DIR / "history.sqlite"
+SQLITE_HISTORY_URL: AnyUrl = AnyUrl(url=f"sqlite:///{DEFAULT_HISTORY_DB_PATH}")
+
 
 class BrowserSettings(BaseSettings):
     """Browser configuration settings.
@@ -43,32 +47,48 @@ class BrowserSettings(BaseSettings):
         extra="ignore",
     )
 
-    theme: Literal["textual-dark", "textual-light"] = Field(
-        default="textual-dark",
-        description="Default theme for the browser",
-    )
+    # Look and feel settings
+    theme: str = Field(default="textual-dark", description="Default theme for the browser", validate_default=True)
 
-    history_limit: int = Field(
-        default=1000,
-        gt=0,
-        le=10000,
-        description="Maximum number of URLs to keep in history",
-    )
+    # Terminal graphics protocol is was Kitty and friends uses so that is what we default to
+    image_method: str = Field(default="tgp", description="Image rendering method for textual-image.")
 
-    request_timeout: int = Field(
-        default=20,
-        gt=0,
-        le=120,
-        description="HTTP request timeout in seconds",
-    )
+    # History settings
+    history_file_path: AnyUrl = Field(default=SQLITE_HISTORY_URL, description="Path to the SQLite database")
+    history_days: int = Field(default=365 * 10, gt=0, description="Maximum age of history entries in days")
+    history_store_nsfw: bool = Field(default=True, description="Whether to store NSFW pages in history")
 
-    user_agent: BrowserTypeLiteral = Field(
-        default="firefox",
-        description="Browser to impersonate for curl_cffi",
-    )
+    # Network settings
+    request_timeout: int = Field(default=300, gt=0, description="HTTP request timeout in seconds")
+    user_agent: BrowserTypeLiteral = Field(default="firefox", description="Browser to impersonate for curl_cffi")
 
-    # TODO(TheLovinator): We should make our own auto that picks the best available  # noqa: E501, TD003
-    image_method: Literal["auto", "tgp", "sixel", "unicode", "halfcell"] = Field(
-        default="tgp",
-        description="Image rendering method for textual-image (auto, tgp, sixel, unicode, halfcell)",  # noqa: E501
-    )
+    @model_validator(mode="after")
+    def validate_theme(self) -> BrowserSettings:
+        """Validate that the selected theme is valid.
+
+        Returns:
+            The validated settings instance.
+
+        Raises:
+            ValueError: If the theme is not valid.
+        """
+        themes: list[str] = list(BUILTIN_THEMES.keys())
+        if self.theme not in themes:
+            msg: str = f"Theme '{self.theme}' is not a valid theme. Available themes: {themes}"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_history_file_path(self) -> BrowserSettings:
+        """Validate that the history file path is a SQLite database.
+
+        Returns:
+            The validated settings instance.
+
+        Raises:
+            ValueError: If the history file path is not a SQLite database.
+        """
+        if not str(self.history_file_path).startswith("sqlite:///"):
+            msg: str = "History file path must be a SQLite database (sqlite:///...)"
+            raise ValueError(msg)
+        return self
