@@ -36,6 +36,7 @@
         "pyupgrade",
         "renderable",
         "rnet",
+        "rxddit",
         "selectolax",
         "selftext",
         "SHORTLINK",
@@ -52,5 +53,6 @@
         "usertext",
         "WASD",
         "webscrapers"
-    ]
+    ],
+    "python.analysis.typeCheckingMode": "strict"
 }

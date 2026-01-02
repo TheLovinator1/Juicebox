@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-import tldextract
 from sqlalchemy.engine.base import Engine
 from sqlmodel import SQLModel
 from sqlmodel import create_engine
@@ -27,8 +26,7 @@ from juicebox.history import save_url_to_history
 from juicebox.hotkeys import get_hotkeys
 from juicebox.models import PageResult
 from juicebox.settings import BrowserSettings
-from juicebox.sites.reddit import handle_reddit
-from juicebox.sites.unknown import handle_unknown
+from juicebox.sites import get_site_handler
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -36,7 +34,7 @@ if TYPE_CHECKING:
 
 
 async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
-    """These are the sites we have support for.
+    """Fetch content from a website using the appropriate handler.
 
     Args:
         app (JuiceboxApp): The JuiceBox Textual Application
@@ -45,18 +43,9 @@ async def fetch_site_contents(app: JuiceboxApp, url: str) -> PageResult:
     Returns:
         Represents the result of processing a web page.
     """
-    tld: tldextract.ExtractResult = tldextract.extract(url=url)
-    domain: str = tld.domain
-    subdomain: str = tld.subdomain
-    suffix: str = tld.suffix
-
-    app.log(f"Trying to go to {subdomain}.{domain}.{suffix} {tld.is_private=}")
-
-    if f"{domain}.{suffix}" == "reddit.com":
-        page_result: PageResult = await handle_reddit(url=url, app=app)
-    else:
-        page_result: PageResult = await handle_unknown(url=url, app=app)
-    return page_result
+    handler = await get_site_handler(url)
+    app.log(f"Using handler: {handler.name} for {url}")
+    return await handler.handle(url=url, app=app)
 
 
 def create_error_page(url: str, error: str) -> PageResult:

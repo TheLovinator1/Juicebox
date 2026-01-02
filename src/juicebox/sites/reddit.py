@@ -19,6 +19,7 @@ from textual.widgets import Markdown
 from juicebox.exceptions import BrowserError
 from juicebox.http import request_aget
 from juicebox.models import PageResult
+from juicebox.sites.base import SiteHandler
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -944,3 +945,48 @@ async def handle_reddit(url: str, app: JuiceboxApp) -> PageResult:
         raise BrowserError(msg)
 
     return _render_reddit_content(data=reddit_post_data)
+
+
+class RedditHandler(SiteHandler):
+    """Handler for Reddit URLs."""
+
+    def __init__(self) -> None:
+        """Initialize the Reddit handler."""
+        super().__init__()
+        self.name = "Reddit"
+        self.description = "American proprietary social news aggregation and forum social media platform."
+        self.tags = ["social", "news", "news aggregator"]
+        self.requires_api_key = False
+        self.url_patterns = [
+            # https://www.reddit.com/r/Zenlesszonezeroleaks_/comments/1q1rvf4/sunna_menu_animations_via_meromero/
+            r"(?:www\.)?reddit\.com",
+            # https://redd.it/1q1rvf4
+            r"(?:www\.)?redd\.it",
+            # https://old.reddit.com/r/Zenlesszonezeroleaks_/comments/1q1rvf4/sunna_menu_animations_via_meromero/
+            r"old\.reddit\.com",
+            # https://rxddit.com/r/Zenlesszonezeroleaks_/comments/1q1rvf4/sunna_menu_animations_via_meromero/
+            r"(?:www\.)?rxddit\.com",
+        ]
+
+    async def can_handle(self, url: str) -> bool:
+        """Check if this handler can process the given Reddit URL.
+
+        Args:
+            url: The URL to check.
+
+        Returns:
+            True if this is a Reddit URL, False otherwise.
+        """
+        return self.matches_url_pattern(url)
+
+    async def handle(self, url: str, app: JuiceboxApp) -> PageResult:
+        """Handle a Reddit URL.
+
+        Args:
+            url: The Reddit URL to process.
+            app: The Juicebox application instance.
+
+        Returns:
+            A PageResult with the processed content.
+        """
+        return await handle_reddit(url=url, app=app)

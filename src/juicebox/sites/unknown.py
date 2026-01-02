@@ -1,3 +1,7 @@
+"""Handler for unknown/unsupported sites."""
+
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from markdownify import markdownify
@@ -8,6 +12,7 @@ from textual.widgets import Markdown
 from juicebox.exceptions import BrowserError
 from juicebox.http import request_aget
 from juicebox.models import PageResult
+from juicebox.sites.base import SiteHandler
 
 if TYPE_CHECKING:
     from curl_cffi import requests
@@ -44,7 +49,6 @@ async def handle_unknown(url: str, app: JuiceboxApp) -> PageResult:
     title: str = title_node.text(strip=True) if title_node else response.url
 
     # Extract meta description or og:description
-
     summary: str = extract_summary(tree)
 
     md: str = markdownify(html)
@@ -89,3 +93,39 @@ def extract_summary(tree: HTMLParser) -> str:
         summary = og_content
 
     return summary
+
+
+class UnknownHandler(SiteHandler):
+    """Fallback handler for unknown/unsupported websites."""
+
+    def __init__(self) -> None:
+        """Initialize the unknown site handler."""
+        super().__init__()
+        self.name = "Unknown/Unsupported Site"
+        self.description = "Generic fallback handler for any website"
+        self.tags = ["generic", "fallback"]
+        self.requires_api_key = False
+        self.url_patterns = [r".*"]  # Matches any URL
+
+    async def can_handle(self, url: str) -> bool:
+        """This handler can handle any URL.
+
+        Args:
+            url: The URL to check.
+
+        Returns:
+            Always returns True as this is the fallback handler.
+        """
+        return True
+
+    async def handle(self, url: str, app: JuiceboxApp) -> PageResult:
+        """Handle any unknown website by extracting and rendering its content.
+
+        Args:
+            url: The website URL to process.
+            app: The Juicebox application instance.
+
+        Returns:
+            A PageResult with the converted HTML content.
+        """
+        return await handle_unknown(url=url, app=app)
